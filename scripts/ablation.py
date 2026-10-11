@@ -62,36 +62,47 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
             stack.callback(repo._engine.dispose)
             model = model_provider or DemoModelProvider()
             engine = WorkflowEngine(repo, model_provider=model, search_provider=search_provider or DemoSearchProvider(), mode=mode)
+        failed: list[str] = []
         for question_id, payload in zip(ids, payloads):
-            # Both arms use the very same model instance and original input constraints.
-            decision = repo.create(payload, mode=mode)
-            context = decision.model_dump(mode='json')
-            single = validate_stage_output('ablation', model.generate('ablation', context,
-                call_context=ProviderCallContext(decision.id, 'ablation:A', stage='ablation')), context)
-            for risk in single['risks']:
-                rows.append(dict(question_id=question_id, arm='A', risk_text=risk, label=''))
-                counts['A'] += 1
-            if engine.run(decision.id).status.value != 'awaiting_confirmation':
-                raise RuntimeError('Arm B clarification failed')
-            engine.confirm_clarification(decision.id)
-            result = engine.run(decision.id)
-            if result.status.value != 'awaiting_review':
-                raise RuntimeError('Arm B workflow failed')
-            engine.apply_review(decision.id, action='deferred', note='Ablation only; no business execution.')
-            for objection in result.outputs['challenging']['objections']:
-                rows.append(dict(question_id=question_id, arm='B', risk_text=objection['text'], label=''))
-                counts['B'] += 1
+            # A question only counts when both arms finish, so the arms stay comparable.
+            question_rows: list[dict] = []
+            try:
+                # Both arms use the very same model instance and original input constraints.
+                decision = repo.create(payload, mode=mode)
+                context = decision.model_dump(mode='json')
+                single = validate_stage_output('ablation', model.generate('ablation', context,
+                    call_context=ProviderCallContext(decision.id, 'ablation:A', stage='ablation')), context)
+                question_rows += [dict(question_id=question_id, arm='A', risk_text=risk, label='') for risk in single['risks']]
+                if engine.run(decision.id).status.value != 'awaiting_confirmation':
+                    raise RuntimeError('Arm B clarification failed')
+                engine.confirm_clarification(decision.id)
+                result = engine.run(decision.id)
+                if result.status.value != 'awaiting_review':
+                    raise RuntimeError('Arm B workflow failed')
+                engine.apply_review(decision.id, action='deferred', note='Ablation only; no business execution.')
+                question_rows += [dict(question_id=question_id, arm='B', risk_text=item['text'], label='')
+                                  for item in result.outputs['challenging']['objections']]
+            except Exception:
+                if mode == 'demo':
+                    raise
+                failed.append(question_id)
+                continue
+            rows += question_rows
+            for row in question_rows:
+                counts[row['arm']] += 1
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / 'risks.csv').open('w', encoding='utf-8', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=['question_id', 'arm', 'risk_text', 'label'])
         writer.writeheader()
         writer.writerows(rows)
-    lines = ['# 风险对照实验', '', f'模式：{mode}；问题数：{len(questions)}', '',
+    completed = len(questions) - len(failed)
+    lines = ['# 风险对照实验', '', f'模式：{mode}；问题数：{len(questions)}；两组均完成：{completed}',
+             f"未完成（已排除，不计入两组）：{'、'.join(failed) if failed else '无'}", '',
              '| 组别 | 风险条数 |', '|---|---:|', f"| A 单模型单次调用 | {counts['A']} |", f"| B 完整委员会工作流 | {counts['B']} |", '',
              'label 留空供人工标注；条数不等于风险质量，也不证明委员会更优。',
              'B 包含额外研究和多次调用，当前对照未控制上下文和调用成本；Demo 是合成输出。', '']
     (output_dir / 'summary.md').write_text('\n'.join(lines), encoding='utf-8')
-    return dict(mode=mode, question_count=len(questions), risk_counts=counts)
+    return dict(mode=mode, question_count=len(questions), risk_counts=counts, failed=failed)
 
 
 def main():
