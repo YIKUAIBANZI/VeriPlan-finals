@@ -8,6 +8,10 @@ import {
   type Health,
   type ReviewAction,
 } from "./types";
+import { CalibrationPanel } from "./components/CalibrationPanel";
+import { OutcomesPanel } from "./components/OutcomesPanel";
+import { CouncilPanel } from "./components/CouncilPanel";
+import { ChallengePanel } from "./components/ChallengePanel";
 import { DecisionForm } from "./components/DecisionForm";
 import { WorkflowTimeline, EventLog } from "./components/WorkflowTimeline";
 import { EvidencePanel } from "./components/EvidencePanel";
@@ -18,6 +22,7 @@ import { BusinessBaselinePanel } from "./components/BusinessBaseline";
 import "./styles.css";
 
 export function App({ api = defaultApi }: { api?: DecisionApi }) {
+  const [page, setPage] = useState<"decision" | "calibration">("decision");
   const [decision, setDecision] = useState<Decision | null>(null);
   const [items, setItems] = useState<Decision[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
@@ -83,6 +88,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
   }, [api, decision?.id, decision?.status, busy]);
 
   function newDecision(value?: DecisionInput) {
+    setPage("decision");
     epoch.current++;
     setDecision(null);
     setBusy(false);
@@ -169,6 +175,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
     );
   const contentMode = decision?.mode ?? health?.mode ?? "demo";
   const liveUnlocked = health?.mode === "live" && health.live_available;
+  const writesLocked = health?.mode === "live" && !liveUnlocked;
   const modeMismatch = Boolean(
     decision && health && decision.mode !== health.mode,
   );
@@ -185,8 +192,10 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
       <Ledger
         items={items}
         selected={decision?.id}
-        onSelect={(id) => void operate(() => api.getDecision(id))}
+        onSelect={(id) => { setPage("decision"); void operate(() => api.getDecision(id)); }}
         onNew={() => newDecision()}
+        calibrationSelected={page === "calibration"}
+        onCalibration={() => { newDecision(); setPage("calibration"); }}
       />
       <div className="main-shell">
         <header className="topbar">
@@ -202,8 +211,8 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
         <main id="workspace">
           <div className="page-title">
             <div>
-              <p className="muted">让每个决定，都有据可循。</p>
-              <h1>{decision ? decision.question : "从问题，到有条件的行动"}</h1>
+              <p className="muted">一人公司的 AI 决策委员会</p>
+              <h1>{decision ? decision.question : "会停、会吵、会记住你的偏差"}</h1>
             </div>
             {decision && (
               <span
@@ -238,12 +247,16 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
               </button>
             </div>
           )}
-          <WorkflowTimeline decision={decision} />
-          {!decision ? (
+          {page === "decision" && decision?.status !== "retrospective" && <WorkflowTimeline decision={decision} />}
+          {page === "calibration" ? (
+            <CalibrationPanel api={api} mode={health?.mode} readOnlyReason={!health ? "正在确认运行模式…" : health.mode === "live" && !liveUnlocked ? "真实模式未解锁，暂不能录入。" : undefined}
+              onCreated={created => { newDecision(); setDecision(created); void refreshLedger().catch(err => setError(err.message)); }} />
+          ) : !decision ? (
             <DecisionForm
               key={formVersion}
               initial={initial}
               busy={busy}
+              disabled={writesLocked}
               onSubmit={create}
             />
           ) : (
@@ -280,12 +293,13 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                   </button>
                 </section>
               )}
+              <CouncilPanel decision={decision} />
               <div className="workspace-grid">
                 <div className="work-content">
-                  <BusinessBaselinePanel
+                  {decision.business_baseline && decision.baseline_analysis && (!decision.scenario || decision.scenario === "ai_tool_pilot") && <BusinessBaselinePanel
                     baseline={decision.business_baseline}
                     analysis={decision.baseline_analysis}
-                  />
+                  />}
                   {decision.status === "awaiting_confirmation" && (
                     <section className="paper clarification">
                       <span className="tag">需要你的确认</span>
@@ -321,13 +335,13 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                         <div className="review-buttons">
                           <button
                             className="primary"
-                            disabled={busy}
+                            disabled={busy || writesLocked}
                             onClick={confirm}
                           >
                             确认条件并继续研究
                           </button>
                           <button
-                            disabled={busy}
+                            disabled={busy || writesLocked}
                             onClick={() =>
                               newDecision(copyDecisionInput(decision))
                             }
@@ -344,7 +358,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       <p>已保存你的确认，可以继续研究。</p>
                       <button
                         className="primary"
-                        disabled={busy}
+                        disabled={busy || writesLocked}
                         onClick={() =>
                           void operate(() => api.runDecision(decision.id))
                         }
@@ -358,7 +372,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       <h2>决策已保存</h2>
                       <button
                         className="primary"
-                        disabled={busy}
+                        disabled={busy || writesLocked}
                         onClick={() =>
                           void operate(() => api.runDecision(decision.id))
                         }
@@ -375,7 +389,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       </p>
                       <button
                         className="primary"
-                        disabled={busy}
+                        disabled={busy || writesLocked}
                         onClick={() =>
                           void operate(() => api.retryDecision(decision.id))
                         }
@@ -443,14 +457,17 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       </div>
                     </section>
                   )}
+                  {!finished && decision.status !== "retrospective" && <ChallengePanel decision={decision} />}
                   {finished && (
                     <DecisionResult
                       key={decision.id}
                       decision={decision}
                       onReview={review}
+                      onLabel={labels => { if (!modeMismatch && !writesLocked) void operate(() => api.labelObjections(decision.id, labels)); }}
                       onExportMarkdown={() => void exportMarkdown()}
                       onPrint={() => window.print()}
                       busy={busy || exporting}
+                      writeDisabled={writesLocked}
                       readOnlyReason={
                         modeMismatch
                           ? "历史任务来自另一运行模式，当前只读。"
@@ -458,7 +475,10 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       }
                     />
                   )}
-                  <EventLog decision={decision} />
+                  <OutcomesPanel key={`outcomes-${decision.id}`} decision={decision} busy={busy || writesLocked}
+                    readOnlyReason={modeMismatch ? "历史任务来自另一运行模式，当前只读。" : undefined}
+                    onSave={input => { if (!modeMismatch && !writesLocked) void operate(() => api.saveOutcomes(decision.id, input)); }} />
+                  {decision.status !== "retrospective" && <EventLog decision={decision} />}
                 </div>
                 <EvidencePanel evidence={decision.evidence} />
               </div>
@@ -476,10 +496,13 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
 function copyDecisionInput(decision: Decision): DecisionInput {
   return {
     question: decision.question,
-    time_window: "14 天",
+    scenario: decision.scenario ?? "ai_tool_pilot",
+    horizon_days: decision.horizon_days ?? 14,
+    known_risks: [...(decision.known_risks ?? [])],
+    assumptions: (decision.assumptions ?? []).map(({ id: _id, ...input }) => input),
     budget_limit: decision.budget_limit,
     primary_goal: decision.primary_goal,
-    business_baseline: { ...decision.business_baseline },
+    ...(decision.business_baseline ? { business_baseline: { ...decision.business_baseline } } : {}),
   };
 }
 

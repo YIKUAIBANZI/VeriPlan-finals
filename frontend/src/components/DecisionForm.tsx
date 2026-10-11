@@ -1,32 +1,9 @@
 import { useState } from "react";
 import type { BusinessBaseline, DecisionInput } from "../types";
-const emptyBaseline: BusinessBaseline = {
-  monthly_ticket_volume: null,
-  repetitive_ticket_rate: null,
-  average_handle_minutes: null,
-  loaded_hourly_cost: null,
-  expected_ai_resolution_rate: null,
-  review_minutes_per_ai_ticket: null,
-  monthly_tool_cost: null,
-  max_acceptable_error_rate: null,
-};
-const example: DecisionInput = {
-  question:
-    "我们的售后消息越来越多，想用 AI 客服降低人力成本，但担心体验变差。两周内应该直接上线，还是先做小范围验证？",
-  time_window: "14 天",
-  budget_limit: 8000,
-  primary_goal: "降低重复咨询，同时守住客户满意度",
-  business_baseline: {
-    monthly_ticket_volume: 1200,
-    repetitive_ticket_rate: 60,
-    average_handle_minutes: 8,
-    loaded_hourly_cost: 45,
-    expected_ai_resolution_rate: 70,
-    review_minutes_per_ai_ticket: 1.5,
-    monthly_tool_cost: 1200,
-    max_acceptable_error_rate: 2,
-  },
-};
+import { emptyBaseline, scenarioExamples, scenarioLabels } from "../fixtures/scenarios";
+import { AssumptionEditor } from "./AssumptionEditor";
+import type { HorizonDays, Scenario } from "../types";
+const example = scenarioExamples.ai_tool_pilot;
 
 const baselineGroups: {
   title: string;
@@ -69,22 +46,18 @@ const baselineGroups: {
 ];
 export function DecisionForm({
   busy,
+  disabled = false,
   onSubmit,
   initial,
 }: {
   busy: boolean;
+  disabled?: boolean;
   onSubmit: (input: DecisionInput) => void;
   initial?: DecisionInput;
 }) {
-  const [value, setValue] = useState(
-    initial
-      ? {
-          ...initial,
-          time_window: example.time_window,
-          business_baseline: initial.business_baseline ?? { ...emptyBaseline },
-        }
-      : { ...example, question: "", business_baseline: { ...emptyBaseline } },
-  );
+  const [value, setValue] = useState<DecisionInput>(initial ?? {
+    ...example, question: "", known_risks: [], assumptions: [], business_baseline: { ...emptyBaseline },
+  });
   return (
     <section className="paper create-paper">
       <div className="form-intro">
@@ -97,9 +70,23 @@ export function DecisionForm({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          onSubmit(value);
+          if (busy || disabled) return;
+          const { business_baseline, ...input } = value;
+          onSubmit({ ...input, known_risks: value.known_risks.map(risk => risk.trim()).filter(Boolean),
+            ...(value.scenario === "ai_tool_pilot" ? { business_baseline: business_baseline ?? { ...emptyBaseline } } : {}),
+          });
         }}
       >
+        <div className="scenario-cards" aria-label="决策场景">
+          {(Object.keys(scenarioLabels) as Scenario[]).map(scenario => <article key={scenario} data-selected={value.scenario === scenario}>
+            <button type="button" aria-pressed={value.scenario === scenario} onClick={() => {
+              const { business_baseline: _baseline, ...rest } = value;
+              setValue({ ...rest, scenario, ...(scenario === "ai_tool_pilot" ? { business_baseline: { ...emptyBaseline } } : {}) });
+            }}>{scenarioLabels[scenario]}</button>
+            <button type="button" className="text-button" onClick={() => setValue(structuredClone(scenarioExamples[scenario]))}>填入 {scenarioLabels[scenario]}示例</button>
+          </article>)}
+        </div>
+        <p className="synthetic-note">示例均为合成演示数字，请替换为你的实际假设。</p>
         <label htmlFor="question">经营决策问题</label>
         <textarea
           id="question"
@@ -111,26 +98,12 @@ export function DecisionForm({
           onChange={(e) => setValue({ ...value, question: e.target.value })}
           placeholder="例如：该直接上线 AI 售后客服，还是先做小范围验证？"
         />
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => setValue(example)}
-        >
-          填入 AI 售后客服示例
-        </button>
         <div className="form-grid">
           <div>
             <label htmlFor="window">时间窗口</label>
-            <input
-              id="window"
-              required
-              maxLength={80}
-              value={value.time_window}
-              readOnly
-            />
-            <small className="field-hint">
-              当前版本固定为 14 天验证计划。
-            </small>
+            <select id="window" value={value.horizon_days} onChange={e => setValue({ ...value, horizon_days: Number(e.target.value) as HorizonDays })}>
+              {[7, 14, 30, 90, 180, 365].map(days => <option key={days} value={days}>{days} 天</option>)}
+            </select>
           </div>
           <div>
             <label htmlFor="budget">预算上限（元）</label>
@@ -156,7 +129,17 @@ export function DecisionForm({
           value={value.primary_goal}
           onChange={(e) => setValue({ ...value, primary_goal: e.target.value })}
         />
-        <details className="baseline-form">
+        <fieldset className="known-risks">
+          <legend>你已经想到的风险（最多 5 条）</legend>
+          {value.known_risks.map((risk, index) => <div className="risk-input" key={index}>
+            <input aria-label={`已知风险 ${index + 1}`} maxLength={200} value={risk} onChange={e => setValue({ ...value, known_risks: value.known_risks.map((r, i) => i === index ? e.target.value : r) })} />
+            <button type="button" aria-label={`删除风险 ${index + 1}`} onClick={() => setValue({ ...value, known_risks: value.known_risks.filter((_, i) => i !== index) })}>删除</button>
+          </div>)}
+          <button type="button" disabled={value.known_risks.length >= 5} onClick={() => setValue({ ...value, known_risks: [...value.known_risks, ""] })}>添加已知风险</button>
+        </fieldset>
+        <AssumptionEditor value={value.assumptions} onChange={assumptions => setValue({ ...value, assumptions })} />
+        {value.scenario === "ai_tool_pilot" && <details className="baseline-form">
+
           <summary>
             <span>业务基线（可选）</span>
             <small>留空即未知，系统不会用行业均值补齐</small>
@@ -178,12 +161,12 @@ export function DecisionForm({
                         min={0}
                         max={field.max}
                         step={field.step}
-                        value={value.business_baseline[field.key] ?? ""}
+                        value={value.business_baseline?.[field.key] ?? ""}
                         onChange={(event) =>
                           setValue({
                             ...value,
                             business_baseline: {
-                              ...value.business_baseline,
+                              ...(value.business_baseline ?? emptyBaseline),
                               [field.key]:
                                 event.target.value === ""
                                   ? null
@@ -199,13 +182,10 @@ export function DecisionForm({
               </fieldset>
             ))}
           </div>
-          <p className="synthetic-note">
-            “填入示例”使用合成演示数字，不代表你的真实业务。
-          </p>
-        </details>
+        </details>}
         <div className="form-bottom">
-          <p>当前演示范围：AI 售后客服试点决策。</p>
-          <button className="primary" disabled={busy} type="submit">
+          <p>先确认条件，再由委员会审查。</p>
+          <button className="primary" disabled={busy || disabled} type="submit">
             {busy ? "正在创建…" : "创建并开始研究"}
           </button>
         </div>

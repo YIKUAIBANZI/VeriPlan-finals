@@ -1,0 +1,35 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { createFixtureApi } from "./mockApi";
+import { outcomeDecision, splitDecision } from "./decisions";
+import { scenarioExamples } from "./scenarios";
+afterEach(() => vi.unstubAllGlobals());
+it("runs locally through both gates and exposes member completion snapshots", async () => {
+  const fetch = vi.fn(() => { throw new Error("No network allowed"); });
+  vi.stubGlobal("fetch", fetch);
+  const api = createFixtureApi([]);
+  const created = await api.createDecision(scenarioExamples.first_hire);
+  expect((await api.runDecision(created.id)).status).toBe("awaiting_confirmation");
+  await api.confirmDecision(created.id);
+  expect((await api.runDecision(created.id)).status).toBe("analyzing");
+  expect((await api.getDecision(created.id)).events.filter(e => e.status === "completed")).toHaveLength(1);
+  await api.getDecision(created.id); await api.getDecision(created.id);
+  const ready = await api.getDecision(created.id);
+  expect(ready.status).toBe("awaiting_review");
+  await api.labelObjections(created.id, { O1: "adopted" });
+  const approved = await api.reviewDecision(created.id, "revised", "先短约");
+  expect(approved.objection_labels?.O1).toBe("adopted");
+  expect(fetch).not.toHaveBeenCalled();
+});
+it("overwrites checkpoints, rejects premature outcomes and records retrospectives without running", async () => {
+  const api = createFixtureApi([outcomeDecision, splitDecision]);
+  const input = { checkpoint: "day_30" as const, note: "更新", actuals: [{ assumption_id: "A1", actual_value: 0 }] };
+  await expect(api.saveOutcomes(splitDecision.id, input)).rejects.toThrow();
+  const saved = await api.saveOutcomes(outcomeDecision.id, input);
+  expect(saved.outcomes).toHaveLength(1);
+  expect(saved.outcomes![0].actuals[0].error_pct).toBe(-100);
+  const past = await api.createRetrospective({ question: "是否投入新的获客渠道来扩展客户？", scenario: "marketing_spend", decision_date: "2026-07-01", assumptions: [{ ...scenarioExamples.first_hire.assumptions[0], actual_value: 12000 }], note: "当时的预测" });
+  expect(past.status).toBe("retrospective");
+  expect(past.is_retrospective).toBe(true);
+  await expect(api.runDecision(past.id)).rejects.toThrow();
+  expect((await api.getCalibration()).samples.some(s => s.source === "retrospective")).toBe(true);
+});

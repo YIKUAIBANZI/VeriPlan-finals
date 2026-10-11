@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { splitDecision, outcomeDecision, legacyDecision } from "../fixtures/decisions";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
@@ -132,7 +133,7 @@ describe("DecisionResult trust boundaries", () => {
   it("warns when a legacy record did not use the supported window", () => {
     renderResult({ decision: { ...decision, time_window: "3 days" } });
 
-    expect(screen.getByText(/旧模板未受当前 14 天约束校验/)).toBeVisible();
+    expect(screen.getByText(/历史周期未对应当前可选范围/)).toBeVisible();
   });
 
   it("replaces approval controls with a read-only reason", () => {
@@ -153,4 +154,44 @@ describe("DecisionResult trust boundaries", () => {
     expect(onExportMarkdown).toHaveBeenCalledOnce();
     expect(onPrint).toHaveBeenCalledOnce();
   });
+});
+
+it("labels objections before approval and counts only saved adopted labels after approval", () => {
+  const onLabel = vi.fn();
+  const { rerender } = renderResult({ decision: splitDecision, onLabel });
+  fireEvent.change(screen.getByLabelText("O1 风险标注"), { target: { value: "adopted" } });
+  expect(onLabel).toHaveBeenCalledWith({ O1: "adopted" });
+  expect(screen.queryByText("1 条改变了方案")).not.toBeInTheDocument();
+  rerender(<DecisionResult decision={outcomeDecision} busy={false} onReview={vi.fn()} onLabel={onLabel} onExportMarkdown={vi.fn()} onPrint={vi.fn()} />);
+  expect(screen.getByText("1 条改变了方案")).toBeVisible();
+  expect(screen.getByLabelText("O1 风险标注")).toHaveValue("adopted");
+});
+
+it("prevents labels and review writes while saving or reading a cross-mode record", () => {
+  const { rerender } = renderResult({ decision: splitDecision, busy: true, onLabel: vi.fn() });
+  expect(screen.getByLabelText("O1 风险标注")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "采纳建议" })).toBeDisabled();
+  rerender(<DecisionResult decision={splitDecision} busy={false} readOnlyReason="当前只读" onReview={vi.fn()} onLabel={vi.fn()} onExportMarkdown={vi.fn()} onPrint={vi.fn()} />);
+  expect(screen.getByLabelText("O1 风险标注")).toBeDisabled();
+});
+
+it.each([
+  ["go", "可以推进"], ["go_with_conditions", "满足条件后推进"], ["small_test_first", "先做小规模验证"],
+  ["defer", "暂缓决定"], ["no_go", "不建议推进"], ["pilot_before_rollout", "先试点再推广"], ["do_not_pilot", "不建议试点"],
+] as const)("renders and exports recommendation %s", (recommendation, label) => {
+  const onExportMarkdown = vi.fn();
+  renderResult({ decision: { ...legacyDecision, memo: { ...legacyDecision.memo!, recommendation } }, onExportMarkdown });
+  expect(screen.getByLabelText("推荐结论")).toHaveTextContent(label);
+  fireEvent.click(screen.getByRole("button", { name: "下载 Markdown" }));
+  expect(onExportMarkdown).toHaveBeenCalledOnce();
+});
+it("shows contract conditions and accepts a new 90-day window without a legacy warning", () => {
+  renderResult({ decision: splitDecision });
+  expect(screen.getByText(/O1：先取得预付款，覆盖工资支出/)).toBeVisible();
+  expect(screen.queryByText(/历史周期未对应/)).not.toBeInTheDocument();
+});
+
+it("still allows historical export while Live writes are locked", () => {
+  renderResult({ decision: legacyDecision, writeDisabled: true });
+  expect(screen.getByRole("button", { name: "下载 Markdown" })).toBeEnabled();
 });
