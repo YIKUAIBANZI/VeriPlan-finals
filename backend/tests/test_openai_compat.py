@@ -101,21 +101,21 @@ def test_compat_live_gate_uses_selected_provider_key(tmp_path, key, enabled, sea
         assert client.post('/api/decisions', json=general_payload()).status_code == (201 if unlocked else 503)
 
 
-@pytest.mark.parametrize('body', [None, [], {}, {'choices': []},
-    {'choices': [{'finish_reason': 'length', 'message': {'content': '{}'}}]},
-    {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'not-json'}}]},
-    {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': '[]'}}]}])
-def test_malformed_completion_is_not_retried_and_audit_closes(body):
+@pytest.mark.parametrize('body,code', [(None, 'model_contract_violation'), ([], 'model_contract_violation'), ({}, 'model_contract_violation'), ({'choices': []}, 'model_contract_violation'),
+    ({'choices': [{'finish_reason': 'length', 'message': {'content': '{}'}}]}, 'model_incomplete'),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'not-json'}}]}, 'model_invalid_json'),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': '[]'}}]}, 'model_contract_violation')])
+def test_malformed_completion_has_one_repair_and_audit_closes(body, code):
     spy, requests = AttemptSpy(), []
     def handler(request):
         requests.append(request)
         return httpx2.Response(200, content=json.dumps(body))
     model = provider(handler, recorder=spy)
     try:
-        with pytest.raises(ProviderError, match='model_invalid_response'):
+        with pytest.raises(ProviderError, match=code):
             model.generate('clarifying', context_with_evidence(), call_context=ProviderCallContext('id', 'clarifying'))
     finally: model.close()
-    assert len(requests) == 1 and spy.finished == [(1, 'failed', 'model_invalid_response')]
+    assert len(requests) == 2 and spy.finished == [(1, 'failed', code), (2, 'failed', code)]
 
 
 @pytest.mark.parametrize('exception', [httpx2.ReadTimeout, httpx2.ConnectError])

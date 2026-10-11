@@ -9,6 +9,7 @@ class ProviderError(RuntimeError):
 
     def __init__(self, code: str):
         self.code = code
+        self.incomplete_reason = None
         super().__init__(f"External provider failed: {code}")
 
 
@@ -35,6 +36,7 @@ class AttemptRecorder(Protocol):
         *,
         status: str,
         error_code: str | None = None,
+        incomplete_reason: str | None = None,
     ) -> None: ...
 
 

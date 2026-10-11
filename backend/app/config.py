@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = 'deepseek-v4-flash'
     deepseek_timeout_seconds: int = Field(default=30, ge=1, le=120)
-    deepseek_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
+    deepseek_max_output_tokens: int = Field(default=8192, ge=512, le=16384)
     tavily_api_key: SecretStr | None = None
     tavily_timeout_seconds: int = Field(default=15, ge=1, le=30)
     tavily_trusted_domains: DomainTuple = ()

@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, StringConstraints, model_validator
 
 from app.schemas import StrictModel
+from app.providers.output_validation import ContractViolation
 
 
 MODEL_STAGES = ("clarifying", "planning", "analyzing", "challenging", "delivering", "ablation")
@@ -170,17 +171,12 @@ def stage_schema(stage: str, *, member: str | None = None) -> tuple[str, dict[st
     return f"veriplan_{stage}", model.model_json_schema()
 
 
-def _validate_confirmed_constraints(
-    stage: str,
-    result: StageOutput,
-    context: Mapping[str, Any],
-) -> None:
+def _confirmed_constraints(stage: str, context: Mapping[str, Any]) -> dict:
     fields = {
         "clarifying": ("question", "time_window", "budget_limit", "primary_goal"),
         "delivering": ("time_window", "budget_limit", "primary_goal"),
     }.get(stage, ())
-    if any(getattr(result, field) != context.get(field) for field in fields):
-        raise ValueError("model output changed confirmed constraints")
+    return {field: context[field] for field in fields}
 
 
 def _referenced_evidence_ids(stage: str, result: StageOutput) -> set[str]:
@@ -207,7 +203,7 @@ def _validate_evidence_references(
     }
     unknown = _referenced_evidence_ids(stage, result) - known
     if unknown:
-        raise ValueError("model output contains unknown evidence references")
+        raise ContractViolation("evidence_ids", "unknown id", "model output contains unknown evidence references")
 
 
 def _validate_action_budget(
@@ -218,7 +214,7 @@ def _validate_action_budget(
     if stage != "delivering":
         return
     if sum(item.budget_limit for item in result.action_plan) > context["budget_limit"]:
-        raise ValueError("action budget exceeds confirmed budget")
+        raise ContractViolation(f"action_plan.budget_limit", "exceeds confirmed budget", "action budget exceeds confirmed budget")
 
 
 def _validate_evidence_gap(
@@ -229,9 +225,9 @@ def _validate_evidence_gap(
     if stage != "delivering" or context.get("evidence"):
         return
     if result.facts:
-        raise ValueError("facts require evidence")
+        raise ContractViolation(f"facts", "requires evidence", "facts require evidence")
     if not result.research_gaps:
-        raise ValueError("a research gap is required when evidence is missing")
+        raise ContractViolation(f"research_gaps", "required without evidence", "a research gap is required when evidence is missing")
 
 
 def validate_stage_output(
@@ -239,25 +235,32 @@ def validate_stage_output(
     payload: Mapping[str, Any],
     context: Mapping[str, Any],
 ) -> dict[str, Any]:
-    payload = dict(payload)
+    if not isinstance(payload, Mapping):
+        raise ContractViolation("$", "object required", "model output must be an object")
+    # Confirmed input belongs to the server; model wording is never authoritative.
+    payload = dict(payload) | _confirmed_constraints(stage, context)
     computed = {}
     if stage == "challenging":
         warnings = deepcopy(context.get("calibration_warnings", []))
-        novel = sum(item.get("overlaps_known_risk_index") is None for item in payload.get("objections", []) if isinstance(item, dict))
+        items = payload.get("objections", [])
+        novel = sum(item.get("overlaps_known_risk_index") is None for item in items if isinstance(item, dict)) if isinstance(items, list) else 0
         computed = {"calibration_warnings": warnings, "novel_objection_count": novel}
         for key, value in computed.items():
             if key in payload and payload.pop(key) != value:
-                raise ValueError("model changed code-generated calibration or novel count")
+                raise ContractViolation(key, "code generated value mismatch", "model changed code-generated calibration or novel count")
     member = context.get("_council_member") if stage == "analyzing" else None
     result = (MemberOpinion if member else _require_model(stage)).model_validate(payload)
+    if stage == "planning":
+        queries = {" ".join(query.split()).casefold() for query in result.queries}
+        if len(queries) < 2:
+            raise ContractViolation("queries", "requires two distinct queries", "at least two distinct queries required")
     if stage == "analyzing":
         members = [result] if member else result.members
         if member and result.role != member:
-            raise ValueError("member role does not match requested role")
+            raise ContractViolation("role", "requested role mismatch", "member role does not match requested role")
         known = {item["id"] for item in context.get("assumptions", []) if "id" in item}
         if any(set(item.challenged_assumption_ids) - known for item in members):
-            raise ValueError("unknown assumption reference")
-    _validate_confirmed_constraints(stage, result, context)
+            raise ContractViolation("challenged_assumption_ids", "unknown id", "unknown assumption reference")
     _validate_evidence_references(stage, result, context)
     _validate_action_budget(stage, result, context)
     _validate_evidence_gap(stage, result, context)
@@ -265,24 +268,25 @@ def validate_stage_output(
         known = {item["id"] for item in context.get("assumptions", []) if "id" in item}
         objections = result.objections
         if len({item.id for item in objections}) != len(objections):
-            raise ValueError("duplicate objection ID")
-        for item in objections:
+            raise ContractViolation("objections.id", "duplicate id", "duplicate objection ID")
+        for index, item in enumerate(objections):
             if set(item.targets_assumption_ids) - known:
-                raise ValueError("unknown assumption reference")
+                raise ContractViolation(f"objections[{index}].targets_assumption_ids", "unknown id", "unknown assumption reference")
             if item.overlaps_known_risk_index is not None and item.overlaps_known_risk_index >= len(context.get("known_risks", [])):
-                raise ValueError("unknown known risk index")
+                raise ContractViolation(f"objections[{index}].overlaps_known_risk_index", "unknown index", "unknown known risk index")
             if known and not item.targets_assumption_ids and item.overlaps_known_risk_index is None:
-                raise ValueError("objection must target an assumption or known risk")
+                raise ContractViolation(f"objections[{index}]", "requires assumption or known risk", "objection must target an assumption or known risk")
         for warning in computed["calibration_warnings"]:
             if not any(set(warning["assumption_ids"]) <= set(item.targets_assumption_ids) for item in objections):
-                raise ValueError("calibration warning must be covered by an objection")
+                raise ContractViolation("objections.targets_assumption_ids", "must cover calibration warning", "calibration warning must be covered by an objection")
     if stage == "delivering":
         objections = context.get("outputs", {}).get("challenging", {}).get("objections", [])
         known = {item["id"] for item in objections}
         blockers = {item["id"] for item in objections if item["severity"] == "blocker"}
         conditions = {item.objection_id for item in result.conditions}
         if conditions - known:
-            raise ValueError("condition references unknown objection")
+            raise ContractViolation("conditions.objection_id", "unknown id", "condition references unknown objection")
         if blockers and (result.recommendation == "go" or not blockers <= conditions):
-            raise ValueError("blocker requires a non-go recommendation and covering conditions")
-    return result.model_dump(mode="json") | computed
+            raise ContractViolation(f"conditions", "must cover blockers with non-go recommendation", "blocker requires a non-go recommendation and covering conditions")
+    # Preserve even legacy whitespace verbatim after Pydantic normalization.
+    return result.model_dump(mode="json") | computed | _confirmed_constraints(stage, context)

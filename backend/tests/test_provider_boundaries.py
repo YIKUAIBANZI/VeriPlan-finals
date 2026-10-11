@@ -449,7 +449,7 @@ def test_invalid_planning_query_fails_before_search_and_recovers_on_retry(tmp_pa
 
     assert failed.failure == {
         "stage": "planning",
-        "code": "model_invalid_response",
+        "code": "model_contract_violation",
         "message": "阶段执行失败，请重试；已完成输出已保留。",
     }
     assert failed.research_queries == []
@@ -492,7 +492,7 @@ def test_invalid_or_duplicate_planning_queries_fail_before_search(tmp_path, quer
     failed = engine.run(decision_id)
 
     assert failed.failure["stage"] == "planning"
-    assert failed.failure["code"] == "model_invalid_response"
+    assert failed.failure["code"] == "model_contract_violation"
     assert failed.research_queries == []
 
 

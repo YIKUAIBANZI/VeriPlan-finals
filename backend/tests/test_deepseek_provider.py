@@ -72,7 +72,7 @@ class AttemptSpy:
         self.started.append((context, provider, attempt_number))
         return len(self.started)
 
-    def finish_provider_attempt(self, call_id, *, status, error_code=None):
+    def finish_provider_attempt(self, call_id, *, status, error_code=None, incomplete_reason=None):
         self.finished.append((call_id, status, error_code))
 
 
@@ -109,7 +109,7 @@ def test_provider_uses_responses_json_schema_and_minimal_context(context):
     assert body["model"] == "deepseek-v4-flash"
     assert body["stream"] is False
     assert body["reasoning"] == {"effort": "low"}
-    assert body["max_output_tokens"] == 4096
+    assert body["max_output_tokens"] == 8192
     assert body["text"]["format"]["type"] == "json_schema"
     assert body["text"]["format"]["name"] == "veriplan_clarifying"
     assert body["text"]["format"]["schema"]["additionalProperties"] is False
@@ -280,10 +280,11 @@ def invalid_response_cases(valid_payload: dict):
     ]
 
 
-def test_invalid_responses_are_not_retried_or_leaked(context):
+def test_invalid_responses_receive_one_repair_without_leaks(context):
     valid = DemoModelProvider().generate("clarifying", context)
 
-    for response_body in invalid_response_cases(valid):
+    codes = ["model_incomplete", "model_incomplete", "model_contract_violation", "model_invalid_json", "model_invalid_json", "model_contract_violation", "model_contract_violation"]
+    for response_body, code in zip(invalid_response_cases(valid), codes):
         calls = 0
 
         def handler(request):
@@ -298,8 +299,8 @@ def test_invalid_responses_are_not_retried_or_leaked(context):
         finally:
             provider.close()
 
-        assert raised.value.code == "model_invalid_response"
-        assert calls == 1
+        assert raised.value.code == code
+        assert calls == 2
         assert "private" not in str(raised.value)
 
 

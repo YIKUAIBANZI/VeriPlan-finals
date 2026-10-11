@@ -30,13 +30,12 @@ def test_demo_outputs_satisfy_shared_contract(stage):
     assert validate_stage_output(stage, payload, context)["summary"]
 
 
-def test_contract_rejects_confirmed_constraint_rewrite():
+def test_contract_overwrites_confirmed_constraint_rewrite():
     context = context_with_evidence()
     payload = DemoModelProvider().generate("clarifying", context)
     payload["budget_limit"] += 1
 
-    with pytest.raises(ValueError, match="confirmed constraints"):
-        validate_stage_output("clarifying", payload, context)
+    assert validate_stage_output("clarifying", payload, context)["budget_limit"] == context["budget_limit"]
 
 
 def test_contract_rejects_unknown_evidence_reference():
@@ -103,14 +102,13 @@ def test_contract_allows_no_facts_but_requires_a_gap_when_no_evidence():
         validate_stage_output("delivering", payload, context)
 
 
-def test_planning_contract_preserves_queries_for_engine_normalization():
+def test_planning_contract_rejects_duplicates_before_provider_success():
     context = context_with_evidence()
     payload = DemoModelProvider().generate("planning", context)
     payload["queries"] = [payload["queries"][0], payload["queries"][0].upper()]
 
-    result = validate_stage_output("planning", payload, context)
-
-    assert result["queries"] == payload["queries"]
+    with pytest.raises(ValueError, match="distinct queries"):
+        validate_stage_output("planning", payload, context)
 
 
 @pytest.mark.parametrize(

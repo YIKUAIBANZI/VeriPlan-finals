@@ -15,7 +15,7 @@ def test_deepseek_configuration_defaults_and_bounds():
     assert Settings(enable_live_workflow=True).enable_live_workflow is True
     assert settings.deepseek_model == "deepseek-v4-flash"
     assert settings.deepseek_timeout_seconds == 30
-    assert settings.deepseek_max_output_tokens == 4096
+    assert settings.deepseek_max_output_tokens == 8192
 
     with pytest.raises(ValidationError):
         Settings(deepseek_timeout_seconds=0)
@@ -24,7 +24,7 @@ def test_deepseek_configuration_defaults_and_bounds():
     with pytest.raises(ValidationError):
         Settings(deepseek_max_output_tokens=511)
     with pytest.raises(ValidationError):
-        Settings(deepseek_max_output_tokens=8193)
+        Settings(deepseek_max_output_tokens=16385)
 
 
 def test_tavily_configuration_defaults_bounds_and_normalized_domains(monkeypatch):

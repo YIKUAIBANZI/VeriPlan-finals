@@ -55,6 +55,8 @@ class DecisionRepository:
             column["name"] for column in inspector.get_columns("evidence_cards")
         }
         statements: list[str] = []
+        if "incomplete_reason" not in {column["name"] for column in inspector.get_columns("provider_calls")}:
+            statements.append("ALTER TABLE provider_calls ADD COLUMN incomplete_reason VARCHAR(32)")
         if "mode" not in decision_columns:
             statements.append(
                 "ALTER TABLE decisions ADD COLUMN mode VARCHAR(8) NOT NULL DEFAULT 'demo'"
@@ -302,6 +304,7 @@ class DecisionRepository:
         *,
         status: str,
         error_code: str | None = None,
+        incomplete_reason: str | None = None,
     ) -> None:
         if status not in {"succeeded", "failed"}:
             raise ValueError("Provider attempt terminal status is invalid")
@@ -313,6 +316,7 @@ class DecisionRepository:
                 raise ValueError("Provider attempt is already finished")
             record.status = status
             record.error_code = error_code
+            record.incomplete_reason = incomplete_reason if incomplete_reason in {"max_output_tokens", "content_filter", "unknown"} else None
             record.finished_at = datetime.now(UTC)
 
     def list_provider_calls(self, decision_id: str) -> list[dict[str, Any]]:
@@ -333,6 +337,7 @@ class DecisionRepository:
                     "attempt_number": record.attempt_number,
                     "status": record.status,
                     "error_code": record.error_code,
+                    "incomplete_reason": record.incomplete_reason,
                     "started_at": record.started_at,
                     "finished_at": record.finished_at,
                 }
@@ -433,13 +438,15 @@ class DecisionRepository:
             records = session.scalars(select(DecisionRecord).order_by(DecisionRecord.created_at.desc()).options(selectinload(DecisionRecord.evidence), selectinload(DecisionRecord.events), selectinload(DecisionRecord.research_queries))).all()
             return [self._snapshot(record) for record in records]
 
-    def mark_failed(self, decision_id: str, stage: str, code: str = "stage_failed") -> None:
+    def mark_failed(self, decision_id: str, stage: str, code: str = "stage_failed", *, incomplete_reason: str | None = None) -> None:
         with self._sessions.begin() as session:
             record = self._require(session, decision_id)
             record.status = transition(DecisionStatus(record.status), DecisionStatus.failed).value
             outputs = json.loads(record.output_json)
             outputs["_failure"] = {"stage": stage, "code": code, "message": "运行中断，请重试当前阶段。" if code == "interrupted" else "阶段执行失败，请重试；已完成输出已保留。"}
-            record.output_json = json.dumps(outputs)
+            if incomplete_reason in {"max_output_tokens", "content_filter", "unknown"}:
+                outputs["_failure"]["incomplete_reason"] = incomplete_reason
+            record.output_json = json.dumps(outputs, ensure_ascii=False)
             session.add(WorkflowEventRecord(decision_id=decision_id, stage=stage, status="failed", summary=outputs["_failure"]["message"], created_at=datetime.now(UTC)))
 
     def complete_stage(self, decision_id: str, stage: str, output: dict, target: DecisionStatus) -> None:
