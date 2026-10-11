@@ -39,7 +39,7 @@ def run_smoke(*, authorized: bool, settings=None, model_provider=None, search_pr
         decision_id = None
         snapshot = {}
         result = {'mode': 'live', 'passed': False, 'stages': {}, 'provider_call_count': 0,
-                  'provider_calls_by_operation': {}, 'provider_calls': [], 'human_gates': [], 'error_code': None}
+                  'provider_calls_by_operation': {}, 'provider_calls': [], 'council': {}, 'human_gates': [], 'error_code': None}
         with TestClient(app) as client:
             try:
                 if not app.state.live_available:
@@ -73,8 +73,14 @@ def run_smoke(*, authorized: bool, settings=None, model_provider=None, search_pr
                 snapshot = client.get('/api/decisions/' + decision_id).json()
                 calls = app.state.repository.list_provider_calls(decision_id)
                 result['provider_call_count'] = len(calls)
-                result['provider_calls'] = [{field: call[field] for field in ('logical_operation', 'status', 'error_code')} for call in calls]
+                result['provider_calls'] = [{field: call[field] for field in ('logical_operation', 'status', 'error_code', 'profile', 'model')} for call in calls]
                 result['provider_calls_by_operation'] = dict(Counter(call['logical_operation'] for call in calls))
+                for member in snapshot.get('outputs', {}).get('analyzing', {}).get('members', []):
+                    role = member['role']
+                    actual = next((call for call in reversed(calls) if call['status'] == 'succeeded'
+                                   and call['logical_operation'].split(':')[:2] == ['analyzing', role]), None)
+                    result['council'][role] = dict(profile=actual['profile'] if actual else None,
+                        model=actual['model'] if actual else None, fallback_from=member.get('fallback_from'))
                 starts = {}
                 for event in snapshot['events']:
                     stage = event['stage']

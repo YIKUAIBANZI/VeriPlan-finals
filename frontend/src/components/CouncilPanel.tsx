@@ -1,6 +1,7 @@
 import type { CouncilRole, Decision, Stance } from "../types";
+import { expertLabels } from "../types";
 import { assumptionName } from "../assumptionName";
-const roles: Record<CouncilRole, string> = { opportunity: "机会官", cfo: "财务官", risk: "风险官" };
+const roles: Record<CouncilRole, string> = { opportunity: "机会官", cfo: "财务官", risk: "风险官", expert: "专项专家" };
 const stances: Record<Stance, string> = { support: "支持", oppose: "反对", conditional: "有条件支持" };
 export function CouncilPanel({ decision }: { decision: Decision }) {
   const output = decision.outputs.analyzing;
@@ -9,12 +10,17 @@ export function CouncilPanel({ decision }: { decision: Decision }) {
   // A retry invalidates completion events and aggregate output from the old attempt.
   const attemptStart = decision.events.map(e => e.stage === "analyzing" && e.status === "started").lastIndexOf(true);
   const events = decision.events.slice(Math.max(0, attemptStart));
-  const allComplete = (Object.keys(roles) as CouncilRole[]).every(role => [...events].reverse().find(e => e.stage === `council:${role}`)?.status === "completed");
+  const planning = decision.outputs.planning;
+  const expertKind = planning?.expert_kind ?? output?.members?.find(m => m.role === "expert")?.expert_kind;
+  const hasExpert = Boolean(expertKind || events.some(e => e.stage === "council:expert") || (running && !output?.members));
+  const visibleRoles = (Object.keys(roles) as CouncilRole[]).filter(role =>
+    !running && output?.members ? output.members.some(m => m.role === role) : role !== "expert" || hasExpert);
+  const allComplete = visibleRoles.every(role => [...events].reverse().find(e => e.stage === `council:${role}`)?.status === "completed");
   return <section className="paper council-panel" aria-label="AI 决策委员会">
     <div className="section-heading"><h2>AI 决策委员会</h2>{decision.mode === "demo" && <span className="demo-badge">Demo · 合成</span>}</div>
     {output?.disagreement?.is_split && (!running || allComplete) && <p className="council-split" role="status">委员会意见分裂</p>}
-    <div className="council-seats">
-      {(Object.keys(roles) as CouncilRole[]).map(role => {
+    <div className={`council-seats${visibleRoles.length === 3 ? " legacy-seats" : ""}`}>
+      {visibleRoles.map(role => {
         const event = [...events].reverse().find(e => e.stage === `council:${role}`);
         const completed = event?.status === "completed";
         const member = (!running || completed) ? output?.members?.find(m => m.role === role) : undefined;
@@ -24,8 +30,15 @@ export function CouncilPanel({ decision }: { decision: Decision }) {
         const eventStance = (Object.keys(stances) as Stance[]).find(key => stances[key] === eventLabel);
         const stance = member?.stance ?? eventStance;
         const state = member || completed ? "completed" : decision.status === "failed" ? "failed" : "thinking";
-        return <article key={role} aria-label={roles[role]} data-stance={stance} className={`council-seat ${state}`}>
-          <h3>{roles[role]}</h3>
+        const title = role === "expert" ? `本题加派：${expertKind ? expertLabels[expertKind] : "专项"}专家` : roles[role];
+        return <article key={role} aria-label={title} data-stance={stance} className={`council-seat ${state}`}>
+          <h3>{title}</h3>
+          {role === "expert" && <>
+            {planning?.expert_reason && <p className="expert-reason">{planning.expert_reason}</p>}
+            {planning?.expert_source === "scenario_default" && planning.expert_reason !== "按场景默认" && <span className="model-badge">按场景默认</span>}
+          </>}
+          {member?.model_label && <span className="model-badge">{member.model_label}</span>}
+          {member?.fallback_from && <span className="fallback-badge">已切换备用模型</span>}
           <div aria-live="polite" aria-atomic="true">
             {member ? <div className="council-conclusion">
               <strong className="stance">{stances[member.stance]}</strong>

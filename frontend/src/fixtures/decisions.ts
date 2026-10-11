@@ -1,13 +1,14 @@
-import type { Decision, MemberOpinion, CalibrationProfile } from "../types";
+import { expertLabels, type ExpertKind, type Scenario, type StageOutput, type Decision, type MemberOpinion, type CalibrationProfile } from "../types";
 import { scenarioExamples, emptyBaseline } from "./scenarios";
 export const members: MemberOpinion[] = [
-  { role: "opportunity", stance: "support", headline: "新订单足以支持一次验证", reasoning: "优先验证增量需求。", key_points: ["先锁定客户意向"], challenged_assumption_ids: ["A1"], evidence_ids: ["3"], confidence: 65 },
-  { role: "cfo", stance: "oppose", headline: "现金储备不足以覆盖回款延迟", reasoning: "收入不能等同于当期现金流。", key_points: ["先谈预付款"], challenged_assumption_ids: ["A1"], evidence_ids: [], confidence: 80 },
-  { role: "risk", stance: "conditional", headline: "必须保留退出条件", reasoning: "产能和需求仍未验证。", key_points: ["分阶段签约"], challenged_assumption_ids: ["A1"], evidence_ids: [], confidence: 70 },
+  { model_label: "通义千问 qwen3.8-flash", role: "opportunity", stance: "support", headline: "新订单足以支持一次验证", reasoning: "优先验证增量需求。", key_points: ["先锁定客户意向"], challenged_assumption_ids: ["A1"], evidence_ids: ["3"], confidence: 65 },
+  { model_label: "DeepSeek v4-flash", role: "cfo", stance: "oppose", headline: "现金储备不足以覆盖回款延迟", reasoning: "收入不能等同于当期现金流。", key_points: ["先谈预付款"], challenged_assumption_ids: ["A1"], evidence_ids: [], confidence: 80 },
+  { model_label: "MiniMax M2.5-highspeed", role: "risk", stance: "conditional", headline: "必须保留退出条件", reasoning: "产能和需求仍未验证。", key_points: ["分阶段签约"], challenged_assumption_ids: ["A1"], evidence_ids: [], confidence: 70 },
+  { role: "expert", expert_kind: "legal_compliance", model_label: "DeepSeek v4-flash", stance: "oppose", headline: "先核实用工义务", reasoning: "短约也需要核对适用的用工约束。", key_points: ["取得专业核验意见"], challenged_assumption_ids: ["A1"], evidence_ids: [], confidence: 70 },
 ];
-export function councilEvent(role: MemberOpinion["role"], status: "started" | "completed") {
+export function councilEvent(role: MemberOpinion["role"], status: "started" | "completed", kind: ExpertKind = "legal_compliance") {
   const member = members.find(m => m.role === role)!;
-  return { stage: `council:${role}`, status, summary: status === "started" ? `${role} 开始审查` : `${{ opportunity: "机会官", cfo: "财务官", risk: "风险官" }[role]}：${{ support: "支持", oppose: "反对", conditional: "有条件支持" }[member.stance]}——${member.headline}`, created_at: "2026-10-11T10:00:00Z" };
+  return { stage: `council:${role}`, status, summary: status === "started" ? `${role} 开始审查` : `${{ opportunity: "机会官", cfo: "财务官", risk: "风险官", expert: `${expertLabels[kind]}专家` }[role]}：${{ support: "支持", oppose: "反对", conditional: "有条件支持" }[member.stance]}——${member.headline}`, created_at: "2026-10-11T10:00:00Z" };
 }
 export const splitDecision: Decision = {
   ...scenarioExamples.first_hire, id: "fixture-council", mode: "demo", status: "awaiting_review", time_window: "90 天",
@@ -16,7 +17,8 @@ export const splitDecision: Decision = {
   evidence: [{ id: "3", title: "合成客户意向记录", summary: "三位意向客户尚未付款。", source_url: "https://demo.invalid/intents", stance: "context", reliability: "low", is_demo: true }],
   research_queries: [], events: members.map(m => councilEvent(m.role, "completed")),
   outputs: {
-    analyzing: { summary: "机会与现金流判断出现分歧", members, disagreement: { stances: { opportunity: "support", cfo: "oppose", risk: "conditional" }, is_split: true } },
+    planning: fixturePlanning("first_hire"),
+    analyzing: { summary: "机会与现金流判断出现分歧", members, disagreement: { stances: { opportunity: "support", cfo: "oppose", risk: "conditional", expert: "oppose" }, is_split: true } },
     challenging: { summary: "先解决现金缺口", premortem: "假设 90 天后失败：客户延迟付款，工资支出耗尽储备，工作室被迫中断交付。",
       objections: [
         { id: "O1", text: "回款周期与工资支付错配", severity: "blocker", targets_assumption_ids: ["A1"], overlaps_known_risk_index: null, evidence_ids: ["3"] },
@@ -39,3 +41,8 @@ export const calibrationFixture: CalibrationProfile = {
   mode: "demo", categories: [{ category: "revenue", n: 3, mean_bias_pct: -38.5, hit_rate: 0, mean_confidence: 70, overconfidence_gap: 70 }],
   samples: [1, 2, 3].map(n => ({ decision_id: `synthetic-${n}`, assumption_id: "A1", category: "revenue", source: "demo" })),
 };
+
+export function fixturePlanning(scenario: Scenario = "ai_tool_pilot"): StageOutput {
+  const defaults: Record<Scenario, ExpertKind> = { first_hire: "legal_compliance", big_order: "operations", marketing_spend: "platform_rules", ai_tool_pilot: "customer", general: "personal_longterm" };
+  return { summary: "合成研究规划", expert_kind: defaults[scenario], expert_reason: "按场景默认", expert_source: "scenario_default" };
+}

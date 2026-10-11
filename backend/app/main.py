@@ -8,6 +8,7 @@ from app.config import Settings
 from app.providers.base import ModelProvider, SearchProvider
 from app.providers.deepseek import DeepSeekModelProvider
 from app.providers.openai_compat import OpenAICompatModelProvider
+from app.providers.profiles import parse_council_model_map, PROFILE_MODELS, PROFILE_URLS
 from app.providers.tavily import TavilySearchProvider
 from app.repository import DecisionRepository
 from app.markdown_export import render_decision_markdown
@@ -29,12 +30,18 @@ def create_app(
     settings = settings or Settings()
     repository = DecisionRepository(database_path if database_path is not None else settings.database_url)
     model_key = settings.deepseek_api_key if settings.model_provider == 'deepseek' else settings.openai_compat_api_key
-    live_model_configured = _has_secret(model_key)
+    council_map = parse_council_model_map(settings.council_model_map)
+    missing_profiles = {profile for profile, _ in council_map.values()
+                        if not _has_secret(getattr(settings, profile + '_api_key'))}
+    if not _has_secret(model_key):
+        missing_profiles.add(settings.model_provider)
+    live_model_configured = not missing_profiles
     live_search_configured = _has_secret(settings.tavily_api_key)
     live_requested = settings.app_mode == 'live' and settings.enable_live_workflow
 
     constructed_model = model_provider
     constructed_search = search_provider
+    council_providers = {}
     if live_requested and live_model_configured and constructed_model is None:
         if settings.model_provider == 'openai_compat':
             constructed_model = OpenAICompatModelProvider(
@@ -48,6 +55,21 @@ def create_app(
                 timeout_seconds=settings.deepseek_timeout_seconds,
                 max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository,
             )
+    if live_requested and live_model_configured:
+        cache = {}
+        for role, (profile, override) in council_map.items():
+            model = override or (settings.deepseek_model if profile == 'deepseek' else PROFILE_MODELS[profile])
+            if profile == settings.model_provider and model == settings.deepseek_model:
+                council_providers[role] = constructed_model
+                continue
+            identity = (profile, model)
+            if identity not in cache:
+                options = dict(api_key=getattr(settings, profile + '_api_key'), model=model,
+                               timeout_seconds=settings.deepseek_timeout_seconds,
+                               max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository)
+                cache[identity] = (DeepSeekModelProvider(**options) if profile == 'deepseek' else
+                                   OpenAICompatModelProvider(**options, base_url=PROFILE_URLS[profile], profile=profile))
+            council_providers[role] = cache[identity]
     if live_requested and live_search_configured and constructed_search is None:
         constructed_search = TavilySearchProvider(
             api_key=settings.tavily_api_key,
@@ -69,6 +91,7 @@ def create_app(
         model_provider=constructed_model if live_available else None,
         search_provider=constructed_search if live_available else None,
         mode=settings.app_mode,
+        council_providers=council_providers if live_available else None,
     )
 
     @asynccontextmanager
@@ -76,7 +99,7 @@ def create_app(
         workflow.recover_interrupted()
         yield
         closed: set[int] = set()
-        for provider in (constructed_model, constructed_search):
+        for provider in (constructed_model, constructed_search, *council_providers.values()):
             close = getattr(provider, 'close', None)
             if provider is not None and id(provider) not in closed and callable(close):
                 close()
@@ -95,7 +118,9 @@ def create_app(
         if not live_available:
             raise HTTPException(
                 status_code=503,
-                detail='Live workflow is locked or incompletely configured.',
+                detail=('Live workflow is locked or incompletely configured.'
+                        + (' Missing profiles: ' + ', '.join(sorted(missing_profiles | ({'tavily'} if not live_search_configured else set())))
+                           if missing_profiles or not live_search_configured else '')),
             )
 
     def invoke(operation, *args, **kwargs):

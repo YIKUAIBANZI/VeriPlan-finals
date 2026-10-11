@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     openai_compat_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
     openai_compat_api_key: SecretStr | None = None
     openai_compat_model: str = Field(default='deepseek-v4.1-flash', min_length=1)
+    council_model_map: str = ''
+    bailian_api_key: SecretStr | None = None
+    minimax_api_key: SecretStr | None = None
+    kimi_api_key: SecretStr | None = None
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = 'deepseek-v4-flash'
     deepseek_timeout_seconds: int = Field(default=30, ge=1, le=120)
@@ -53,3 +57,10 @@ class Settings(BaseSettings):
     def validate_compat_host(cls, value):
         from app.providers.openai_compat import validate_base_url
         return validate_base_url(value)
+
+    @field_validator("council_model_map")
+    @classmethod
+    def validate_council_map(cls, value):
+        from app.providers.profiles import parse_council_model_map
+        parse_council_model_map(value)
+        return value

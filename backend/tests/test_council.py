@@ -14,8 +14,8 @@ from app.workflow import WorkflowEngine
 from tests.test_finals_scenarios import general_payload
 
 
-def test_three_members_overlap_and_receive_isolated_identical_context(tmp_path):
-    barrier, lock = Barrier(3), Lock()
+def test_four_members_overlap_and_receive_isolated_identical_context(tmp_path):
+    barrier, lock = Barrier(4), Lock()
     seen = {}
 
     class Council(DemoModelProvider):
@@ -38,9 +38,9 @@ def test_three_members_overlap_and_receive_isolated_identical_context(tmp_path):
     engine.confirm_clarification(decision.id)
     result = engine.run(decision.id)
     assert result.status == 'awaiting_review', result.failure
-    assert seen['opportunity'] == seen['cfo'] == seen['risk']
+    assert seen['opportunity'] == seen['cfo'] == seen['risk'] == seen['expert']
     analysis = result.outputs['analyzing']
-    assert [x['role'] for x in analysis['members']] == ['opportunity', 'cfo', 'risk']
+    assert [x['role'] for x in analysis['members']] == ['opportunity', 'cfo', 'risk', 'expert']
     assert analysis['disagreement']['is_split'] is True
     for role in seen:
         assert [e.status for e in result.events if e.stage == f'council:{role}'] == ['started', 'completed']
@@ -68,7 +68,7 @@ def test_member_failure_retries_whole_council_without_partial_output(tmp_path):
     assert 'analyzing' not in failed.outputs
     model.fail = False
     assert engine.retry(decision.id).status == 'awaiting_review'
-    assert calls == Counter(opportunity=2, cfo=2, risk=2)
+    assert calls == Counter(opportunity=2, cfo=2, risk=2, expert=2)
 
 
 @pytest.mark.parametrize('field,value', [('role', 'cfo'), ('evidence_ids', ['missing']),
@@ -88,7 +88,7 @@ def test_prompt_never_includes_other_member_products(tmp_path):
     context = repo.create(DecisionCreate(**general_payload())).model_dump(mode='json')
     context['outputs']['analyzing'] = {'members': ['OTHER_MEMBER_SECRET']}
     context['memo'] = {'summary': 'OTHER_MEMBER_SECRET'}
-    for role in ('opportunity', 'cfo', 'risk'):
+    for role in ('opportunity', 'cfo', 'risk', 'expert'):
         system, prompt = build_prompt('analyzing', context, member=role)
         assert 'OTHER_MEMBER_SECRET' not in prompt
         assert role in system

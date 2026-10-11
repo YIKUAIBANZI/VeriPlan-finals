@@ -20,6 +20,7 @@ _RETRY_DELAYS = (0.25, 0.75)
 
 class DeepSeekModelProvider:
     _provider_name = "deepseek"
+    profile = "deepseek"
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class DeepSeekModelProvider:
             base_url="https://api.deepseek.com",
             timeout=timeout_seconds,
             transport=transport,
+            follow_redirects=False, trust_env=False,
             headers={
                 "Authorization": f"Bearer {secret}",
                 "Content-Type": "application/json",
@@ -59,7 +61,8 @@ class DeepSeekModelProvider:
         _, schema = stage_schema(stage, member=context.get("_council_member"))
         repair_errors = None
         payload = {}
-        for repair in range(2):
+        single_attempt = bool(call_context and call_context.single_attempt)
+        for repair in range(1 if single_attempt else 2):
             operation = (replace(call_context, logical_operation=call_context.logical_operation + ":repair")
                          if repair and call_context else call_context)
             prior_format = payload.get("response_format")
@@ -68,7 +71,7 @@ class DeepSeekModelProvider:
                 payload["response_format"] = prior_format
             call_id = None
             try:
-                body, call_id = self._request(payload, call_context=operation, max_attempts=1 if repair else 3)
+                body, call_id = self._request(payload, call_context=operation, max_attempts=1 if repair or single_attempt else 3)
                 result = validate_stage_output(stage, json.loads(self._extract_output_text(body)), context)
             except (ModelOutputError, ValueError, TypeError, KeyError, IndexError) as error:
                 failure = error if isinstance(error, ModelOutputError) else validation_failure(error, schema)
@@ -76,7 +79,7 @@ class DeepSeekModelProvider:
                 if call_id is not None:
                     self._finish_attempt(call_id, status="failed", error_code=failure.code,
                                          incomplete_reason=failure.incomplete_reason)
-                if repair:
+                if repair or single_attempt:
                     raise failure from None
                 repair_errors = failure.issues
                 continue
@@ -170,6 +173,8 @@ class DeepSeekModelProvider:
                 context=context,
                 provider=self._provider_name,
                 attempt_number=attempt_number,
+                profile=self.profile,
+                model=self._model,
             )
         except Exception as error:
             raise ProviderError("provider_audit_failed") from error
@@ -232,6 +237,11 @@ class DeepSeekModelProvider:
         if len(texts) != 1:
             raise ModelOutputError("model_contract_violation", ["response.output_text: exactly one required"])
         return texts[0]
+
+    @property
+    def model_label(self):
+        from app.providers.profiles import model_label
+        return model_label(self.profile, self._model)
 
     def close(self) -> None:
         self._client.close()

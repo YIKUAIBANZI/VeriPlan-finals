@@ -53,6 +53,8 @@ def _offline_environment(database: Path) -> None:
     os.environ.pop("DEEPSEEK_API_KEY", None)
     os.environ.pop("TAVILY_API_KEY", None)
     os.environ.pop("OPENAI_COMPAT_API_KEY", None)
+    for name in ("BAILIAN_API_KEY", "MINIMAX_API_KEY", "KIMI_API_KEY", "COUNCIL_MODEL_MAP"):
+        os.environ.pop(name, None)
 
 
 def verify() -> dict:
@@ -110,6 +112,9 @@ def verify() -> dict:
                     checkpoints.append(delivered["status"])
 
                     council = delivered['outputs']['analyzing']['disagreement']
+                    planning = delivered['outputs']['planning']
+                    _require(set(council['stances']) == {'opportunity', 'cfo', 'risk', 'expert'}, 'four council seats required')
+                    _require(bool(planning['expert_reason']) and len(planning['expert_reason']) <= 80, 'expert reason missing')
                     challenge = delivered['outputs']['challenging']
                     blockers = [item for item in challenge['objections'] if item['severity'] == 'blocker']
                     _require(council['is_split'], 'council has no disagreement')
@@ -186,6 +191,7 @@ def verify() -> dict:
         "provider_calls": provider_calls,
         "decision_id": decision_id,
         "council": council,
+        "expert": {key: planning[key] for key in ("expert_kind", "expert_reason", "expert_source")},
         "challenge": {"blocker_count": len(blockers), "novel_objection_count": challenge['novel_objection_count'],
                       "calibration_warning_count": len(challenge['calibration_warnings'])},
         "outcome": actual,

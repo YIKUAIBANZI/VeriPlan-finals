@@ -55,7 +55,11 @@ class DecisionRepository:
             column["name"] for column in inspector.get_columns("evidence_cards")
         }
         statements: list[str] = []
-        if "incomplete_reason" not in {column["name"] for column in inspector.get_columns("provider_calls")}:
+        provider_columns = {column["name"] for column in inspector.get_columns("provider_calls")}
+        for column, size in (("profile", 32), ("model", 128)):
+            if column not in provider_columns:
+                statements.append(f"ALTER TABLE provider_calls ADD COLUMN {column} VARCHAR({size})")
+        if "incomplete_reason" not in provider_columns:
             statements.append("ALTER TABLE provider_calls ADD COLUMN incomplete_reason VARCHAR(32)")
         if "mode" not in decision_columns:
             statements.append(
@@ -271,6 +275,8 @@ class DecisionRepository:
         context: ProviderCallContext,
         provider: str,
         attempt_number: int,
+        profile: str | None = None,
+        model: str | None = None,
     ) -> int:
         if attempt_number < 1:
             raise ValueError("Attempt number must be positive")
@@ -285,6 +291,8 @@ class DecisionRepository:
             record = ProviderCallRecord(
                 decision_id=context.decision_id,
                 provider=provider,
+                profile=profile,
+                model=model,
                 logical_operation=context.logical_operation,
                 stage=context.stage,
                 research_query_id=context.research_query_id,
@@ -331,6 +339,8 @@ class DecisionRepository:
                 {
                     "id": record.id,
                     "provider": record.provider,
+                    "profile": record.profile,
+                    "model": record.model,
                     "logical_operation": record.logical_operation,
                     "stage": record.stage,
                     "research_query_id": record.research_query_id,

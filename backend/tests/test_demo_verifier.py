@@ -14,6 +14,9 @@ def _run(output: Path) -> subprocess.CompletedProcess[str]:
     environment["DEEPSEEK_API_KEY"] = "must-not-appear-deepseek"
     environment["TAVILY_API_KEY"] = "must-not-appear-tavily"
     environment["OPENAI_COMPAT_API_KEY"] = "must-not-appear-compat"
+    for profile in ("BAILIAN", "MINIMAX", "KIMI"):
+        environment[profile + "_API_KEY"] = "must-not-appear-" + profile.lower()
+    environment["COUNCIL_MODEL_MAP"] = "expert=kimi"
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--output", str(output)],
         cwd=ROOT,
@@ -48,6 +51,8 @@ def test_verifier_proves_offline_demo_gates_and_export(tmp_path):
         "final_review": "deferred",
     }
     assert evidence["council"]["is_split"] is True
+    assert set(evidence["council"]["stances"]) == {"opportunity", "cfo", "risk", "expert"}
+    assert evidence["expert"] == {"expert_kind": "customer", "expert_reason": "按场景默认", "expert_source": "scenario_default"}
     assert evidence["challenge"]["blocker_count"] >= 1
     assert evidence["challenge"]["novel_objection_count"] >= 1
     assert evidence["challenge"]["calibration_warning_count"] >= 1
@@ -71,6 +76,7 @@ def test_verifier_proves_offline_demo_gates_and_export(tmp_path):
     assert "must-not-appear-deepseek" not in rendered
     assert "must-not-appear-tavily" not in rendered
     assert "must-not-appear-compat" not in rendered
+    assert "must-not-appear-" not in rendered
 
 
 def test_verifier_refuses_to_overwrite_existing_evidence(tmp_path):

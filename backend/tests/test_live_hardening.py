@@ -161,18 +161,18 @@ def decode_stage_context(adapter, request):
     message = input_data(adapter, request)
     stage, context = message['stage'], message['context']
     context.setdefault('evidence', [])
-    context['outputs'] = {'researching': context.get('research', {}), 'challenging': context.get('challenge', {})}
+    context['outputs'] = {'planning': context.get('planning', {}), 'researching': context.get('research', {}), 'challenging': context.get('challenge', {})}
     if stage == 'analyzing':
         body = json.loads(request.content)
         instructions = body['instructions'] if adapter == 'deepseek' else body['messages'][0]['content']
-        context['_council_member'] = next(role for role in ('opportunity', 'cfo', 'risk') if f'本次独立席位 {role}' in instructions)
+        context['_council_member'] = next(role for role in ('opportunity', 'cfo', 'risk', 'expert') if f'本次独立席位 {role}' in instructions)
     return stage, context, message
 
 
 @pytest.mark.parametrize('fails_twice', [False, True])
 def test_council_repairs_are_independent_parallel_and_never_save_partial_output(adapter, tmp_path, fails_twice):
     repo = DecisionRepository(tmp_path / 'council.db')
-    counts, seen, lock, barrier = Counter(), [], Lock(), Barrier(3)
+    counts, seen, lock, barrier = Counter(), [], Lock(), Barrier(4)
     def handler(request):
         stage, context, message = decode_stage_context(adapter, request)
         role = context.get('_council_member')
@@ -192,7 +192,7 @@ def test_council_repairs_are_independent_parallel_and_never_save_partial_output(
         engine.confirm_clarification(decision.id)
         result = engine.run(decision.id)
     finally: model.close()
-    assert counts['opportunity'] == counts['risk'] == 1 and counts['cfo'] == 2
+    assert counts['opportunity'] == counts['risk'] == counts['expert'] == 1 and counts['cfo'] == 2
     calls = repo.list_provider_calls(decision.id)
     assert [c['logical_operation'] for c in calls if c['logical_operation'].endswith(':repair')] == ['analyzing:cfo:repair']
     assert all(c['status'] != 'running' for c in calls)
@@ -323,8 +323,10 @@ def test_live_smoke_reports_repair_attempts_and_terminal_subcodes(adapter, stage
             deepseek_api_key='unit-secret', openai_compat_api_key='unit-secret', tavily_api_key='unit-secret'),
         search_provider=DemoSearchProvider())
     calls = result['provider_calls']
-    assert all(set(call) == {'logical_operation', 'status', 'error_code'} for call in calls)
-    relevant = [c for c in calls if c['logical_operation'].startswith(stage)]
+    assert all(set(call) == {'logical_operation', 'status', 'error_code', 'profile', 'model'} for call in calls)
+    assert all(c['profile'] == ('deepseek' if adapter == 'deepseek' else 'openai_compat') and c['model'] for c in calls)
+    relevant = [{key: c[key] for key in ('logical_operation', 'status', 'error_code')}
+                for c in calls if c['logical_operation'].startswith(stage)]
     assert relevant == [
         {'logical_operation': stage, 'status': 'failed', 'error_code': 'model_contract_violation'},
         {'logical_operation': stage + ':repair', 'status': 'failed' if fails_twice else 'succeeded',

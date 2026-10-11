@@ -174,3 +174,64 @@ questions.jsonl 每行示例：
 - 不宣称已提高真实 DeepSeek 跑通率或达到真实 ≤120 秒；集成人需用现有授权 smoke 复跑。修复与提高输出预算可能增加耗时，仍保留脚本的 120 秒判定。
 
 最终验收：`cd backend && .venv/bin/python -m pytest -q` → **344 passed in 6.85s**；`git diff --check` 无错误。分支核对为 `feat/live-hardening`。修改仅在 backend/、scripts/ 和本文件；未改前端，未执行 git commit。
+
+## 开发包 C（2026-10-12，feat/council-v2）
+
+本节取代上文三席及“异构模型未实现”的状态。按 C1 → C2 → C3 实施，修改限于 backend/、frontend/src/、scripts/ 和本记录。未读取任何 key 文件（包括 ~/.config），未发真实网络请求，未执行 git add/commit/push；由集成人审查提交。
+
+### 完成对照
+
+| 包 | 完成内容 | 包完成时后端 | 前端 Vitest | build |
+|---|---|---:|---:|---|
+| C1 | 五种专家白名单、planning 选择/场景兜底、四席并发隔离、专家事件、四席反方输入、新旧记录导出 | 375 passed | 67 passed | 成功 |
+| C2 | 席位 map、四个 profile、请求差异、门禁、单次备用请求、模型标签、账本迁移、smoke/ablation 共用路由 | 425 passed | 67 passed | 成功 |
+| C3 / 最终复核 | 专家卡片与理由、模型/备用标记、2×2 与窄屏纵排、旧三席兼容、fixtures；补充 provider 边界回归 | 429 passed | 71 passed | 成功 |
+
+- **C1：** `providers/council.py` 集中专家身份、场景默认和角色指令；planning 的 expert_kind/reason 在 Pydantic 前规范化，expert_source 由代码生成，重复校验保持来源。专家必须回传与规划一致的 kind；普通席位不能冒充专家。四个 worker 各取独立深复制，只有规划、研究、证据与原始约束，互不可见。新聚合严格要求四种角色各一次；历史 JSON 快照读取和 Markdown 不强制套新生成契约。Demo 五场景均使用确定性默认专家，导出包含专家名称与理由。
+- **C2：** `COUNCIL_MODEL_MAP` 使用 `role=profile[:model]`，允许省略席位，未知角色/profile、重复席位、空条目、非法模型标识立即拒绝。未映射席位复用默认 provider；只路由 analyzing，planning/challenging/delivering 与消融 A/C 仍使用默认模型。应用工厂统一组装，smoke 和 Live ablation 因而共用同一 map，不另建路由。
+- **门禁与安全：** 默认模型 key、map 中每个 profile 的非空 key、Tavily key、Live 模式与开关均满足才开放写操作；Fake 注入也不能绕过 key 门禁。缺失信息只列 profile 名称。新增域名保持 HTTPS、禁凭据 URL/非标准端口/query/fragment、禁重定向/代理继承；DeepSeek 客户端也显式禁用重定向与代理继承。qwen3 系列请求固定 `enable_thinking=false`，Moonshot 请求固定 `temperature=1`；Schema 降级与修复均保留这些参数。
+- **修复与备用：** 映射到独立 provider 的席位耗尽原有有界修复/传输预算后，默认 provider 仅发 **1 次物理请求**，不再嵌套修复、重试或 Schema 降级。成功写入 fallback_from 和实际使用模型的 model_label；失败则整个 analyzing 失败，不落半成品。备用操作名为 `analyzing:<role>:fallback`，原有 `:repair` 独立记录；各席不串行、不重跑其他席。审计失败立即终止，不能用备用模型绕过账本。
+- **元数据：** model_label/fallback_from 不在单席模型输出 Schema 内，模型伪造会触发契约错误；工作流在校验后注入。账本新增可空 profile/model 列，可重复迁移，旧记录保留 null，搜索无模型名。provider 字段继续表示适配器（deepseek/openai_compat/tavily），profile 表示席位配置；原默认 openai_compat 通道保持同名 profile。smoke 新增 `council[role]={profile,model,fallback_from}`，逐次 provider_calls 白名单增加 profile/model；失败且无聚合时 council 为空，失败请求仍可查账本。
+- **C3：** 完成态按已有 members 渲染，旧三席不会出现空专家卡；执行中/重试等待四席，第四席未完成前不展示本轮分歧。专家标题为“本题加派：…专家”，显示理由及场景默认标记；有产物后显示模型角标和备用提示。桌面采用 2×2，≤760px 纵排；旧三席保留三列。开发 fixtures 增加专家和模型标签，按场景生成规划及专家身份；仍为合成演示，不发送 fetch/provider 请求。
+
+### 配置与调用预算
+
+```text
+COUNCIL_MODEL_MAP=opportunity=bailian:qwen3.8-flash,cfo=deepseek,risk=minimax:MiniMax-M2.5-highspeed,expert=deepseek
+```
+
+环境 key 名：DEEPSEEK_API_KEY、BAILIAN_API_KEY、MINIMAX_API_KEY、KIMI_API_KEY，以及 TAVILY_API_KEY；默认 openai_compat 继续使用 OPENAI_COMPAT_API_KEY。配置只来自进程环境，不加载 env/key 文件。省略模型名时：deepseek 沿用 DEEPSEEK_MODEL，bailian 为 qwen3.8-flash，minimax 为 MiniMax-M2.5-highspeed，kimi 为 kimi-k2.5；均未做供应商在线可用性核验，支持 map 显式覆盖。
+
+正常完整工作流为 **8 次模型调用**（四席 + 其他四阶段），搜索独立计数。单席原 provider 物理请求上限仍为 4（初始传输/兼容格式预算至多 3 + 修复 1），发生备用后上限为 5；无模型输出错误时不额外修复。新四席调用增加耗时/费用的可能性尚未通过真实链路测量。
+
+### TDD 与旧测试语义变化
+
+- C1 新增 31 个参数化用例先全部失败，再实现通过；四席 Barrier(4) 证明调用重叠，深复制变异用例证明席位隔离。覆盖五场景非法/缺失类型与理由兜底、专家类型相等、反方输入、旧记录 HTTP 读取/导出、新聚合拒绝三席。
+- C2 首批 29 个用例先全部失败，再实现；追加 URL 边界、禁代理/重定向、消融 map、Demo 隔离、元数据防伪、审计失败不可绕过、qwen/Kimi 参数跨降级与修复保持、非默认专家整链路测试。最终新增后端用例共 **85** 个（C1 32 + C2 53）。最后一项 C1 回归先复现：模型合法选择但理由恰为“按场景默认”时，不得仅凭文案误标来源，已修正。
+- C3 新增四项测试，其中专家展示、第四席完成门槛、fixture 专家链三项先失败；历史三席兼容项原本通过。随后实现并保留原审批、模式、失败/重试测试。
+
+既有测试的调整逐项如下：
+
+1. `test_council.py`：三席屏障/角色列表/重跑计数改为四席；隔离、整阶段失败、显式重试的语义不变。
+2. `test_workflow.py`：新输出 members 数 3→4；人工闸门与原约束断言保留。
+3. `test_live_workflow_integration.py`：analyzing 增加一次，正常模型调用 7→8；搜索上限不变。
+4. `test_openai_compat.py`：Mock 按四种角色识别请求，并恢复 prompt 中的 planning 供专家引用；账本正常模型数 7→8。
+5. `test_live_hardening.py`：三席 Barrier 改四席，Mock 解码保留 planning；仍要求财务席独立修复、其他席仅一次，失败无半成品。smoke 白名单增加 profile/model，原 logical_operation/status/error_code 的精确断言保留。
+6. `test_finals_delivery.py`：消融 A/B/C 总模型调用 9→10、analyzing 3→4；smoke 由 7 模型+2搜索变为 8模型+2搜索（总数 9→10）。导出新增专家与理由断言，输出白名单同上。
+7. `test_deepseek_provider.py` 的 AttemptSpy 接受新增 profile/model 参数，原调用计数、闭合账本和脱敏断言保留。
+8. `test_demo_verifier.py`：新增四席和专家断言，并注入三个新 profile 的假 key 与 map 验证禁网清理/不泄漏；原门禁、回填、预算与导出断言保留。
+9. `CouncilPanel.test.tsx`：新运行的同时思考席位由 3→4，完成一席后剩 3；保留没有专家信息的历史失败事件三席行为，另加完成态旧三席兼容用例。`mockApi.test.ts` 多等待第四席完成后再进入审批，双闸门语义不变。
+
+### 偏离+原因
+
+- 原 B2 的可选 map 示例为 `cfo:bailian`，C2 明确改为 `cfo=bailian[:model]`；以新 C2 为准，旧冒号语法拒绝，避免两种解析歧义。
+- C1 只明确非法/缺失 kind 的兜底，没有说明理由缺失、空白或超过 80 字；采用同一场景默认兜底整个选择，不让辅助说明导致 planning 失败，且不截断成可能改变含义的理由。
+- “未配置 map 时行为与现在完全一致”与“某席失败用默认 provider 再调用”在默认 provider 自身失败时有冲突。采用最小增量：只有映射到不同 provider 实例才启用备用；未映射或显式复用默认实例继续原有失败/修复行为。另保留审计失败直接终止，优先遵守安全纪律。
+- 原 Live 加固说明 smoke 逐次数组只含三个字段；新 C2 要求实际 profile/model 可查，故仅增加两个代码持有字段，不输出请求体、key、响应原文或模型推理。
+- 新规格未给省略模型名时的三个兼容 profile 默认值；采用上表固定默认，允许显式覆盖并标明未经真实核验。默认旧 openai_compat 不自动改名或改用新 key，保持既有配置兼容。
+
+### 最终验证与已知限制
+
+最终 pytest **429 passed**；Vitest **71 passed / 14 files**；`npm run build` 成功。`git diff --check` 无错误。指定 `backend/.venv/bin/python scripts/verify_demo.py --output /tmp/vd.json --force` 退出码 0：四席含 expert=oppose、is_split=true；customer 专家、理由“按场景默认”；blocker=1、新风险=1、偏差警告=1；A1 回填误差 -40%；两道人工闸门；provider_calls=[]、真实请求 0。
+
+限制：没有真实供应商联调，模型可用性、请求参数在线兼容性、成功率、费用及 ≤120 秒目标仍待集成人授权验证。前端完成 Vitest、类型/生产构建与响应式样式检查，未执行浏览器截图或投影/真机验收。Demo 和 fixtures 均是合成数据；模型标签只是示例或配置身份，不能作为真实多模型效果证据。仍沿用单进程 SQLite 边界；所有改动未提交。

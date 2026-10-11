@@ -1,6 +1,6 @@
 import type { DecisionApi } from "../api";
 import type { Decision, OutcomeInput, Outcome } from "../types";
-import { calibrationFixture, councilEvent, legacyDecision, members, outcomeDecision, splitDecision } from "./decisions";
+import { calibrationFixture, councilEvent, fixturePlanning, legacyDecision, members, outcomeDecision, splitDecision } from "./decisions";
 
 // Explicit opt-in, in-memory development adapter. Never calls fetch or providers.
 // Fixture arithmetic demonstrates UI states; backend calibration remains authoritative.
@@ -29,10 +29,13 @@ export function createFixtureApi(seed: Decision[] = [splitDecision, outcomeDecis
       const row = get(id);
       if (row.status === "analyzing") {
         const count = row.events.filter(e => e.stage.startsWith("council:") && e.status === "completed").length;
-        if (count < 3) row.events.push(councilEvent(members[count].role, "completed"));
+        if (count < members.length) row.events.push(councilEvent(members[count].role, "completed", row.outputs.planning?.expert_kind));
         else {
           row.status = "awaiting_review";
+          const planning = row.outputs.planning ?? fixturePlanning(row.scenario);
           row.outputs = clone(splitDecision.outputs);
+          row.outputs.planning = planning;
+          row.outputs.analyzing.members!.find(m => m.role === "expert")!.expert_kind = planning.expert_kind;
           row.memo = clone(splitDecision.memo);
           // A mock must not cite A1 on a decision that has no assumptions.
           const ids = row.assumptions?.map(a => a.id) ?? [];
@@ -57,12 +60,12 @@ export function createFixtureApi(seed: Decision[] = [splitDecision, outcomeDecis
     runDecision: async id => {
       const row = get(id);
       if (row.status === "draft") { row.status = "awaiting_confirmation"; row.outputs.clarifying = { summary: "请确认周期、预算和数字假设。" }; }
-      else if (row.status === "planning") { row.status = "analyzing"; row.events = members.map(m => councilEvent(m.role, "started")); }
+      else if (row.status === "planning") { row.status = "analyzing"; row.outputs.planning = fixturePlanning(row.scenario); row.events = members.map(m => councilEvent(m.role, "started")); }
       else throw new Error("当前状态不能运行");
       return clone(row);
     },
     confirmDecision: async id => { const row = get(id); if (row.status !== "awaiting_confirmation") throw new Error("当前状态不能确认"); row.status = "planning"; return clone(row); },
-    retryDecision: async id => { const row = get(id); if (row.status !== "failed") throw new Error("当前状态不能重试"); row.status = "analyzing"; row.outputs = {}; row.events = []; return clone(row); },
+    retryDecision: async id => { const row = get(id); if (row.status !== "failed") throw new Error("当前状态不能重试"); row.status = "analyzing"; row.outputs = { planning: fixturePlanning(row.scenario) }; row.events = []; return clone(row); },
     reviewDecision: async (id, action, note) => { const row = get(id); if (row.status !== "awaiting_review") throw new Error("当前状态不能审批"); row.status = action; row.review_note = note; return clone(row); },
     labelObjections: async (id, labels) => {
       const row = get(id);

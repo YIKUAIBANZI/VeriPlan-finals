@@ -16,7 +16,7 @@ from app.providers.prompts import build_prompt
 def validate_base_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
-        valid = (parsed.scheme == 'https' and parsed.hostname in {'dashscope.aliyuncs.com', 'api.deepseek.com'}
+        valid = (parsed.scheme == 'https' and parsed.hostname in {'dashscope.aliyuncs.com', 'api.deepseek.com', 'api.minimaxi.com', 'api.moonshot.cn'}
                  and parsed.port in {None, 443} and parsed.username is None and parsed.password is None
                  and not parsed.query and not parsed.fragment and not any(ord(c) < 33 for c in value)
                  and '\\' not in value)
@@ -30,10 +30,15 @@ def validate_base_url(value: str) -> str:
 class OpenAICompatModelProvider(DeepSeekModelProvider):
     # Share validation, one repair, and the redacted attempt recorder.
     _provider_name = 'openai_compat'
+    profile = 'openai_compat'
 
     def __init__(self, *, api_key: SecretStr, base_url: str, model: str,
                  timeout_seconds: int = 30, max_output_tokens: int = 8192,
-                 transport=None, sleeper=time.sleep, recorder=None):
+                 transport=None, sleeper=time.sleep, recorder=None, profile="openai_compat"):
+        from app.providers.profiles import PROFILE_URLS
+        if profile != "openai_compat" and (profile not in PROFILE_URLS or base_url != PROFILE_URLS[profile]):
+            raise ValueError("Invalid provider profile URL")
+        self.profile = profile
         self._url = validate_base_url(base_url) + '/chat/completions'
         if not api_key.get_secret_value().strip():
             raise ValueError('Model API key must not be empty')
@@ -48,10 +53,16 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
     def _build_payload(self, stage, context, *, repair_errors=None):
         name, schema = stage_schema(stage, member=context.get('_council_member'))
         system, prompt = build_prompt(stage, context, repair_errors=repair_errors)
-        return dict(model=self._model, stream=False, max_tokens=self._max_output_tokens,
+        payload = dict(model=self._model, stream=False, max_tokens=self._max_output_tokens,
             messages=[{'role': 'system', 'content': system + '\nJSON Schema: ' + json.dumps(schema, ensure_ascii=False)},
                       {'role': 'user', 'content': prompt}],
             response_format={'type': 'json_schema', 'json_schema': {'name': name, 'schema': schema}})
+        host = urlsplit(self._url).hostname
+        if host == 'dashscope.aliyuncs.com' and self._model.lower().startswith('qwen3'):
+            payload['enable_thinking'] = False
+        if host == 'api.moonshot.cn':
+            payload['temperature'] = 1
+        return payload
 
     @staticmethod
     def _extract_output_text(body):

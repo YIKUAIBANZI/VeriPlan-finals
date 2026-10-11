@@ -115,6 +115,8 @@ class ProviderCallRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     decision_id: Mapped[str] = mapped_column(ForeignKey("decisions.id"), index=True)
     provider: Mapped[str] = mapped_column(String(32))
+    profile: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     logical_operation: Mapped[str] = mapped_column(String(64))
     stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     research_query_id: Mapped[int | None] = mapped_column(

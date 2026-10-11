@@ -57,10 +57,18 @@ export interface DecisionInput {
   assumptions: AssumptionInput[];
   business_baseline?: BusinessBaseline;
 }
-export type CouncilRole = "opportunity" | "cfo" | "risk";
+export type CouncilRole = "opportunity" | "cfo" | "risk" | "expert";
+export type ExpertKind = "legal_compliance" | "customer" | "operations" | "platform_rules" | "personal_longterm";
+export const expertLabels: Record<ExpertKind, string> = {
+  legal_compliance: "法务合规", customer: "客户视角", operations: "运营产能",
+  platform_rules: "平台规则", personal_longterm: "个人长期发展",
+};
 export type Stance = "support" | "oppose" | "conditional";
 export interface MemberOpinion {
   role: CouncilRole;
+  expert_kind?: ExpertKind | null;
+  model_label?: string | null;
+  fallback_from?: string | null;
   stance: Stance;
   headline: string;
   reasoning: string;
@@ -172,6 +180,9 @@ export interface Memo {
   research_gaps?: string[];
 }
 export interface StageOutput {
+  expert_kind?: ExpertKind;
+  expert_reason?: string;
+  expert_source?: "model" | "scenario_default";
   summary: string;
   assumptions?: string[];
   questions?: string[];
@@ -184,7 +195,7 @@ export interface StageOutput {
     evidence_ids: string[];
   }[];
   members?: MemberOpinion[];
-  disagreement?: { stances: Record<CouncilRole, Stance>; is_split: boolean };
+  disagreement?: { stances: Partial<Record<CouncilRole, Stance>>; is_split: boolean };
   premortem?: string;
   objections?: Objection[];
   novel_objection_count?: number;

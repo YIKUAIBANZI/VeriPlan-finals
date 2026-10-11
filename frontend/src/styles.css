@@ -1186,7 +1186,12 @@ select:focus-visible { outline: 3px solid #62a4cd; outline-offset: 3px; }
 .council-panel { border-top: 3px solid #213349; }
 .council-panel h2 { font-size: 24px; }
 .council-split { background: #fff0eb; color: #8a3025; border-left: 5px solid #ac3d30; font-size: 26px; font-weight: 600; padding: 12px 18px; }
-.council-seats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.council-seats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.council-seats.legacy-seats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.expert-reason { color: #435566; line-height: 1.6; }
+.model-badge, .fallback-badge { display: inline-block; padding: 3px 8px; margin: 0 6px 8px 0; border: 1px solid #bccbd6; border-radius: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.fallback-badge { color: #795313; background: #fff4d9; }
+.council-seat { overflow-wrap: anywhere; }
 .council-seat { border: 1px solid #bccbd6; border-top: 5px solid #617586; padding: 20px; min-height: 220px; border-radius: 6px; font-size: 16px; }
 .council-seat h3 { font-size: 21px; }
 .council-seat h4 { font-size: 20px; line-height: 1.55; margin: 14px 0; }
@@ -1208,7 +1213,7 @@ select:focus-visible { outline: 3px solid #62a4cd; outline-offset: 3px; }
 .objection-meta { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 16px; color: #795521; }
 .severity-blocker .objection-meta { color: #942f24; }
 .objection-card p { font-size: 16px; }
-@media (max-width: 1050px) { .council-seats { grid-template-columns: 1fr; } .council-seat { min-height: 0; } }
+@media (max-width: 760px) { .council-seats, .council-seats.legacy-seats { grid-template-columns: 1fr; } .council-seat { min-height: 0; } }
 @media (prefers-reduced-motion: reduce) { .council-conclusion { animation: none; } }
 .objection-labels { border-top: 1px solid #dce4e9; padding-top: 18px; margin-bottom: 24px; }
 .objection-labels label { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 16px; font-size: 16px; }
