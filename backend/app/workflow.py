@@ -1,5 +1,7 @@
 """Persisted stages with explicit human gate and one runner per decision/process."""
 from threading import Lock
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Literal
 
 from app.providers.base import (
@@ -8,7 +10,7 @@ from app.providers.base import (
     ProviderError,
     SearchProvider,
 )
-from app.providers.contracts import validate_stage_output
+from app.providers.contracts import COUNCIL_ROLES, council_disagreement, validate_stage_output
 from app.providers.demo import DemoModelProvider, DemoSearchProvider
 from app.providers.search_safety import canonicalize_public_https_url
 from app.repository import DecisionRepository
@@ -285,6 +287,17 @@ class WorkflowEngine:
                 'research_gaps': _stable_unique_text(gaps),
             }
         context = snapshot.model_dump(mode='json')
+        if stage == 'challenging':
+            if snapshot.mode == 'demo':
+                from app.providers.demo import ensure_demo_calibration_seeds
+                with self._lock:
+                    ensure_demo_calibration_seeds(self._repository)
+            from app.calibration import calibration_profile, calibration_warnings
+            context['calibration_warnings'] = calibration_warnings(
+                calibration_profile(self._repository.list(), mode=snapshot.mode), snapshot.assumptions,
+            )
+        if stage == 'analyzing':
+            return self._run_council(snapshot, context)
         call_context = ProviderCallContext(
             decision_id=snapshot.id,
             logical_operation=stage,
@@ -324,3 +337,36 @@ class WorkflowEngine:
                         + '支持度按规则上限调整为 59。'
                     )
         return output
+
+    def _run_council(self, snapshot: DecisionSnapshot, context: dict) -> dict:
+        # Freeze one common input before any worker starts. Each receives its own copy.
+        shared = {key: context[key] for key in (
+            'question', 'time_window', 'budget_limit', 'primary_goal', 'scenario',
+            'horizon_days', 'known_risks', 'assumptions', 'business_baseline',
+            'baseline_analysis', 'evidence',
+        )}
+        shared['outputs'] = {key: context['outputs'][key] for key in ('planning', 'researching') if key in context['outputs']}
+        role_labels = {'opportunity': '机会官', 'cfo': '财务官', 'risk': '风险官'}
+        stance_labels = {'support': '支持', 'oppose': '反对', 'conditional': '有条件支持'}
+
+        def generate(role):
+            member_context = deepcopy(shared)
+            member_context['_council_member'] = role
+            self._repository.append_event(snapshot.id, stage=f'council:{role}', status='started', summary=f'{role_labels[role]}：开始独立评估')
+            try:
+                opinion = validate_stage_output('analyzing', self._model.generate(
+                    'analyzing', member_context, call_context=ProviderCallContext(
+                        decision_id=snapshot.id, logical_operation=f'analyzing:{role}', stage='analyzing',
+                    )), member_context)
+            except (TypeError, ValueError) as error:
+                raise ProviderError('model_invalid_response') from error
+            self._repository.append_event(snapshot.id, stage=f'council:{role}', status='completed', summary=f"{role_labels[role]}：{stance_labels[opinion['stance']]}——{opinion['headline']}")
+            return opinion
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(generate, role) for role in COUNCIL_ROLES]
+            members = [future.result() for future in futures]
+        return validate_stage_output('analyzing', {
+            'summary': '三位委员已完成独立评估。',
+            'members': members, 'disagreement': council_disagreement(members),
+        }, context)

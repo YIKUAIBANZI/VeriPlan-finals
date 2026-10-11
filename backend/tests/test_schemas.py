@@ -68,9 +68,9 @@ def test_decision_window_normalizes_supported_fourteen_day_aliases(value):
     assert decision.time_window == "14 天"
 
 
-@pytest.mark.parametrize("value", ["3 天", "30 days", "two weeks", ""])
+@pytest.mark.parametrize("value", ["3 天", "31 days", "two weeks", ""])
 def test_decision_window_rejects_unsupported_or_ambiguous_values(value):
-    with pytest.raises(ValidationError, match="14-day"):
+    with pytest.raises(ValidationError, match="supported day"):
         DecisionCreate.model_validate(valid_decision_payload(time_window=value))
 
 

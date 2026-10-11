@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 PAYLOAD = {
     "question": "Should our small cross-border ecommerce team pilot AI support before rollout?",
-    "time_window": "14 days",
+    "scenario": "ai_tool_pilot",
+    "horizon_days": 14,
+    "assumptions": [{"label": "新增收入", "category": "revenue", "value": 20000, "unit": "元/月", "confidence": 80}],
+    "known_risks": ["真实样本不足"],
     "budget_limit": 8_000,
     "primary_goal": "Reduce repetitive support workload without unsafe customer promises",
     "business_baseline": {
@@ -49,6 +52,7 @@ def _offline_environment(database: Path) -> None:
     os.environ["DATABASE_URL"] = f"sqlite:///{database}"
     os.environ.pop("DEEPSEEK_API_KEY", None)
     os.environ.pop("TAVILY_API_KEY", None)
+    os.environ.pop("OPENAI_COMPAT_API_KEY", None)
 
 
 def verify() -> dict:
@@ -65,7 +69,7 @@ def verify() -> dict:
             with patch(
                 "socket.socket.connect",
                 side_effect=RuntimeError("network access blocked by demo verifier"),
-            ):
+            ), patch("socket.socket.connect_ex", side_effect=RuntimeError("network access blocked")), patch("socket.getaddrinfo", side_effect=RuntimeError("DNS blocked")):
                 with TestClient(app) as client:
                     health = client.get("/api/health")
                     _require(health.status_code == 200, "health check failed")
@@ -104,6 +108,17 @@ def verify() -> dict:
                         "final human review gate was skipped",
                     )
                     checkpoints.append(delivered["status"])
+
+                    council = delivered['outputs']['analyzing']['disagreement']
+                    challenge = delivered['outputs']['challenging']
+                    blockers = [item for item in challenge['objections'] if item['severity'] == 'blocker']
+                    _require(council['is_split'], 'council has no disagreement')
+                    _require(bool(blockers), 'challenge has no blocker')
+                    _require(challenge['novel_objection_count'] >= 1, 'no novel risk')
+                    _require(bool(challenge['calibration_warnings']), 'missing historical bias warning')
+                    _require(delivered['memo']['recommendation'] != 'go', 'blocker did not prevent go')
+                    labeled = client.post(decision_url + '/objection-labels', json={'labels': {blockers[0]['id']: 'adopted'}})
+                    _require(labeled.status_code == 200, 'objection labeling failed')
 
                     evidence = delivered["evidence"]
                     _require(len(evidence) >= 3, "demo evidence is incomplete")
@@ -146,6 +161,18 @@ def verify() -> dict:
                     _require(reviewed.json()["status"] == "deferred", "review was not recorded")
                     checkpoints.append(reviewed.json()["status"])
 
+                    outcome_response = client.post(decision_url + '/outcomes', json={
+                        'checkpoint': 'day_30', 'actuals': [{'assumption_id': 'A1', 'actual_value': 12000}],
+                        'note': '合成离线回填，仅用于验证。',
+                    })
+                    _require(outcome_response.status_code == 200, 'outcome recording failed')
+                    actual = outcome_response.json()['outcomes'][0]['actuals'][0]
+                    _require(actual['error_pct'] == -40, 'outcome error calculation changed')
+                    calibration = client.get('/api/calibration').json()
+                    _require(len(calibration['samples']) >= 3, 'calibration samples missing')
+                    exported = client.get(decision_url + '/export.md')
+                    _require(exported.status_code == 200 and '回填对照' in exported.text, 'final export is incomplete')
+                    markdown = exported.content
                     provider_calls = app.state.repository.list_provider_calls(decision_id)
                     _require(provider_calls == [], "provider calls occurred in demo verification")
         finally:
@@ -158,6 +185,11 @@ def verify() -> dict:
         "real_provider_requests": 0,
         "provider_calls": provider_calls,
         "decision_id": decision_id,
+        "council": council,
+        "challenge": {"blocker_count": len(blockers), "novel_objection_count": challenge['novel_objection_count'],
+                      "calibration_warning_count": len(challenge['calibration_warnings'])},
+        "outcome": actual,
+        "calibration": {"sample_count": len(calibration['samples']), "categories": calibration['categories']},
         "checkpoints": checkpoints,
         "human_gates": {
             "clarification_confirmed": True,

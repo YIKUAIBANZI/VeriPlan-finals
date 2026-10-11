@@ -123,6 +123,7 @@ def test_provider_uses_responses_json_schema_and_minimal_context(context):
         "primary_goal",
         "business_baseline",
         "baseline_analysis",
+        "scenario", "horizon_days", "known_risks", "assumptions",
     }
     assert "private" not in body["input"]
 

@@ -26,6 +26,7 @@ _ALLOWED_TRANSITIONS: dict[DecisionStatus, set[DecisionStatus]] = {
     DecisionStatus.accepted: set(),
     DecisionStatus.revised: set(),
     DecisionStatus.deferred: set(),
+    DecisionStatus.retrospective: set(),
 }
 
 

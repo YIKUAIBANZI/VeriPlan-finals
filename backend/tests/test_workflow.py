@@ -14,17 +14,17 @@ def test_demo_workflow_requires_confirmation_then_runs_remaining_stages(tmp_path
     clarification = engine.run(decision.id)
 
     assert clarification.status is DecisionStatus.awaiting_confirmation
-    assert [event.stage for event in clarification.events if event.status == "completed"] == ["clarifying"]
+    assert [event.stage for event in clarification.events if event.status == "completed" and not event.stage.startswith("council:")] == ["clarifying"]
 
     engine.confirm_clarification(decision.id)
     snapshot = engine.run(decision.id)
 
     assert snapshot.status is DecisionStatus.awaiting_review
-    assert [event.stage for event in snapshot.events if event.status == "completed"] == [
+    assert [event.stage for event in snapshot.events if event.status == "completed" and not event.stage.startswith("council:")] == [
         "clarifying", "planning", "researching", "analyzing", "challenging", "delivering"
     ]
     assert len(snapshot.evidence) >= 3
-    assert snapshot.memo["recommendation"] == "pilot_before_rollout"
+    assert snapshot.memo["recommendation"] == "small_test_first"
     assert snapshot.memo["support_score"] <= 79
 
 
@@ -42,7 +42,7 @@ def test_demo_outputs_reference_synthetic_evidence_and_constraints(tmp_path):
     assert snapshot.mode == 'demo'
     assert all(card.is_demo and '.invalid/' in card.source_url for card in snapshot.evidence)
     assert len(set(snapshot.outputs['planning']['queries'])) >= 2
-    assert len(snapshot.outputs['analyzing']['analyses']) == 3
+    assert len(snapshot.outputs['analyzing']['members']) == 3
     assert snapshot.outputs['challenging']['hidden_assumptions']
     assert snapshot.memo['facts'] and snapshot.memo['inferences']
     assert snapshot.memo['support_score'] <= 59  # synthetic fixtures cannot establish real support

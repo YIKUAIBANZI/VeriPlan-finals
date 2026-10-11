@@ -51,6 +51,13 @@ _INSTRUCTIONS = """你是 VeriPlan 受控决策工作流中的一个模型阶段
 
 def _constraints(context: Mapping[str, Any]) -> dict[str, Any]:
     selected = {field: context[field] for field in _CONSTRAINT_FIELDS}
+    selected.update({field: context.get(field) for field in ("scenario", "horizon_days", "known_risks")})
+    selected["assumptions"] = [
+        {field: item[field] for field in ("id", "label", "category", "value", "unit", "confidence") if field in item}
+        for item in context.get("assumptions", [])
+    ]
+    if context.get("scenario", "ai_tool_pilot") != "ai_tool_pilot":
+        return selected
     baseline = context.get("business_baseline", {})
     analysis = context.get("baseline_analysis", {})
     selected["business_baseline"] = {
@@ -73,7 +80,7 @@ def _output(context: Mapping[str, Any], stage: str) -> Any:
     return context.get("outputs", {}).get(stage)
 
 
-def build_prompt(stage: str, context: Mapping[str, Any]) -> tuple[str, str]:
+def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None = None) -> tuple[str, str]:
     if stage not in MODEL_STAGES:
         raise ValueError(f"Unsupported model stage: {stage}")
 
@@ -86,6 +93,7 @@ def build_prompt(stage: str, context: Mapping[str, Any]) -> tuple[str, str]:
         selected["evidence"] = _evidence(context)
     elif stage == "challenging":
         selected["analysis"] = _output(context, "analyzing")
+        selected["calibration_warnings"] = context.get("calibration_warnings", [])
         selected["evidence"] = _evidence(context)
     elif stage == "delivering":
         selected["research"] = _output(context, "researching")
@@ -98,4 +106,18 @@ def build_prompt(stage: str, context: Mapping[str, Any]) -> tuple[str, str]:
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return _INSTRUCTIONS, prompt_input
+    instructions = _INSTRUCTIONS
+    if stage == "ablation":
+        instructions += "\n评估这个决定并列出所有风险，只返回 risks 列表；这是单模型单次评估。"
+    if stage == "challenging":
+        instructions += "\n做事前验尸，逐条关联现有假设或已知风险；每个历史偏差警告的全部 assumption_ids 必须由至少一条意见覆盖。calibration_warnings 是代码计算的不可改写数据，无需在输出中重复。"
+    if stage == "delivering":
+        instructions += "\n有 blocker 时不得推荐 go，conditions 必须逐条覆盖所有 blocker 的 objection_id。"
+    if stage == "analyzing":
+        member = member or context.get("_council_member")
+        roles = {"opportunity": "机会官：评估增长机会和收益成立条件。", "cfo": "财务官：审查现金流、成本和机会成本。", "risk": "风险官：审查失败风险和不可逆后果。"}
+        if member is not None:
+            if member not in roles:
+                raise ValueError("Unknown council member")
+            instructions += f"\n本次独立席位 {member}，{roles[member]}只返回该席位的 MemberOpinion，不生成其他委员产物。"
+    return instructions, prompt_input

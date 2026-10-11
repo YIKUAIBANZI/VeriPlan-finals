@@ -1,11 +1,11 @@
 """Public domain contracts for the VeriPlan workflow."""
 
 from enum import Enum
-from datetime import datetime
-from typing import Any, Literal
+from datetime import date, datetime
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -29,6 +29,7 @@ class DecisionStatus(str, Enum):
     deferred = "deferred"
     failed = "failed"
     retrying = "retrying"
+    retrospective = "retrospective"
 
 
 class ResearchQueryStatus(str, Enum):
@@ -98,22 +99,57 @@ class BaselineAnalysis(StrictModel):
     disclaimer: str = "用户输入试算，不是已验证收益"
 
 
+Scenario = Literal["ai_tool_pilot", "first_hire", "big_order", "marketing_spend", "general"]
+Category = Literal["revenue", "cost", "volume", "time", "conversion", "other"]
+Horizon = Literal[7, 14, 30, 90, 180, 365]
+RiskText = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
+class AssumptionInput(StrictModel):
+    label: str = Field(min_length=1, max_length=200)
+    category: Category
+    value: float = Field(allow_inf_nan=False)
+    unit: str = Field(min_length=1, max_length=80)
+    confidence: int = Field(ge=50, le=95, strict=True)
+
+
+class Assumption(AssumptionInput):
+    id: str = Field(pattern=r"^A[1-8]$")
+
+
 class DecisionCreate(StrictModel):
     question: str = Field(min_length=12, max_length=1_000)
-    time_window: str = Field(min_length=1, max_length=80)
+    scenario: Scenario = "ai_tool_pilot"
+    horizon_days: Horizon = 14
+    time_window: str = "14 天"
     budget_limit: int = Field(ge=0, le=10_000_000)
     primary_goal: str = Field(min_length=1, max_length=200)
+    known_risks: list[RiskText] = Field(default_factory=list, max_length=5)
+    assumptions: list[AssumptionInput] = Field(default_factory=list, max_length=8)
     business_baseline: BusinessBaseline = Field(default_factory=BusinessBaseline)
 
-    @field_validator("time_window", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def time_window_must_be_supported(cls, value: object) -> str:
-        if not isinstance(value, str):
-            raise ValueError("time_window must be the supported 14-day window")
-        normalized = " ".join(value.split()).casefold()
-        if normalized not in {"14 天", "14天", "14 day", "14 days"}:
-            raise ValueError("time_window must be the supported 14-day window")
-        return "14 天"
+    def derive_time_window(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        days = value.get("horizon_days")
+        window = value.get("time_window")
+        if window is not None:
+            import re
+            match = re.fullmatch(r"(7|14|30|90|180|365)\s*(?:天|days?)", str(window).strip().casefold())
+            if not match:
+                raise ValueError("time_window must be a supported day window")
+            parsed = int(match[1])
+            if days is not None and days != parsed:
+                raise ValueError("time_window conflicts with horizon_days")
+            days = parsed
+        if days is None:
+            raise ValueError("horizon_days or time_window is required")
+        value["horizon_days"] = days
+        value["time_window"] = f"{days} 天"
+        return value
 
 
 class WorkflowEvent(StrictModel):
@@ -125,6 +161,13 @@ class WorkflowEvent(StrictModel):
 
 class DecisionSnapshot(StrictModel):
     mode: Literal["demo", "live"] = "demo"
+    scenario: Scenario = "ai_tool_pilot"
+    horizon_days: Horizon = 14
+    known_risks: list[str] = Field(default_factory=list)
+    assumptions: list[Assumption] = Field(default_factory=list)
+    objection_labels: dict[str, Literal["adopted", "already_known", "disagree"]] = Field(default_factory=dict)
+    outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    is_retrospective: bool = False
     research_queries: list[ResearchQuery] = Field(default_factory=list)
     failure: dict[str, str] | None = None
     id: str
@@ -145,3 +188,31 @@ class DecisionSnapshot(StrictModel):
 class ReviewRequest(StrictModel):
     action: Literal["accepted", "revised", "deferred"]
     note: str | None = Field(default=None, max_length=1_000)
+
+
+class ObjectionLabelsRequest(StrictModel):
+    labels: dict[str, Literal["adopted", "already_known", "disagree"]] = Field(max_length=6)
+
+
+class InvalidInput(ValueError):
+    """Valid JSON with references that do not belong to this decision."""
+
+
+class ActualInput(StrictModel):
+    assumption_id: str
+    actual_value: float = Field(allow_inf_nan=False)
+
+
+class OutcomeRequest(StrictModel):
+    checkpoint: Literal["day_30", "day_90", "day_180", "custom"]
+    actuals: list[ActualInput] = Field(min_length=1, max_length=8)
+    note: str = Field(default="", max_length=1_000)
+
+
+class RetrospectiveCreate(StrictModel):
+    question: str = Field(min_length=12, max_length=1_000)
+    scenario: Scenario
+    decision_date: date
+    assumptions: list[AssumptionInput] = Field(min_length=1, max_length=8)
+    actuals: list[ActualInput] = Field(min_length=1, max_length=8)
+    note: str = Field(default="", max_length=1_000)
