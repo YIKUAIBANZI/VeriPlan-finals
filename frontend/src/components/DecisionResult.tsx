@@ -1,9 +1,13 @@
 import { useState } from "react";
+import { ChallengePanel } from "./ChallengePanel";
 import {
   statusLabels,
+  recommendationLabels,
   type Claim,
   type Decision,
   type ReviewAction,
+  type ObjectionLabels,
+  type ObjectionLabel,
 } from "../types";
 function Claims({ items }: { items: Claim[] }) {
   return (
@@ -26,13 +30,17 @@ function Claims({ items }: { items: Claim[] }) {
 export function DecisionResult({
   decision,
   busy,
+  writeDisabled = false,
   onReview,
+  onLabel,
   onExportMarkdown,
   onPrint,
   readOnlyReason,
 }: {
   decision: Decision;
   busy: boolean;
+  writeDisabled?: boolean;
+  onLabel?: (labels: ObjectionLabels) => void;
   onReview: (action: ReviewAction, note: string) => void;
   onExportMarkdown: () => void;
   onPrint: () => void;
@@ -40,7 +48,12 @@ export function DecisionResult({
 }) {
   const [note, setNote] = useState("");
   const memo = decision.memo;
-  const challenge = decision.outputs.challenging;
+  const recommendation = decision.outputs.delivering?.recommendation ?? memo?.recommendation;
+  const conditions = decision.outputs.delivering?.conditions ?? memo?.conditions ?? [];
+  const objections = decision.outputs.challenging?.objections ?? [];
+  const reviewed = ["accepted", "revised", "deferred"].includes(decision.status);
+  const adopted = objections.filter(item => decision.objection_labels?.[item.id] === "adopted").length;
+
   return (
     <>
       {memo && (
@@ -59,7 +72,9 @@ export function DecisionResult({
               打印 / 存为 PDF
             </button>
           </div>
+          {recommendation && <p className="recommendation" aria-label="推荐结论">{recommendationLabels[recommendation] ?? recommendation}</p>}
           <h3 className="verdict">{memo.summary}</h3>
+          {conditions.length > 0 && <div className="delivery-conditions"><h3>推进前必须满足的条件</h3><ul>{conditions.map((item, index) => <li key={`${item.objection_id}-${index}`}>{item.objection_id}：{item.condition}</li>)}</ul></div>}
           <div className="support">
             <div>
               <strong>{memo.support_score}</strong>
@@ -108,22 +123,7 @@ export function DecisionResult({
           )}
         </section>
       )}
-      {challenge && (
-        <section className="paper challenge-paper">
-          <div className="section-heading">
-            <h2>反方质询</h2>
-            <span className="tag warn">先看可能错在哪里</span>
-          </div>
-          <p className="objection">
-            {challenge.objection ?? challenge.summary}
-          </p>
-          <ul>
-            {challenge.hidden_assumptions?.map((text) => (
-              <li key={text}>{text}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <ChallengePanel decision={decision} />
       {memo && (
         <section className="paper action-paper">
           <div className="section-heading">
@@ -136,9 +136,9 @@ export function DecisionResult({
             决策窗口：{decision.time_window}
             。以小范围验证为目标，行动需要人工执行。
           </p>
-          {!isSupportedWindow(decision.time_window) && (
+          {!decision.horizon_days && !isSupportedWindow(decision.time_window) && (
             <p className="legacy-warning">
-              旧模板未受当前 14 天约束校验，请按历史输出人工复核。
+              历史周期未对应当前可选范围，请按原始行动计划人工复核。
             </p>
           )}
           <ol className="actions">
@@ -171,6 +171,19 @@ export function DecisionResult({
       )}
       <section className="paper review-paper">
         <h2>用户确认</h2>
+        {objections.length > 0 && <div className="objection-labels">
+          <h3>这些风险，你怎么看？</h3>
+          <p>每次标注都会保存；采纳的条目计入方案改变数。</p>
+          {objections.map(item => <label key={item.id}>{item.id} · {item.text}
+            <select aria-label={`${item.id} 风险标注`} value={decision.objection_labels?.[item.id] ?? ""}
+              disabled={busy || writeDisabled || Boolean(readOnlyReason) || !onLabel || (!reviewed && decision.status !== "awaiting_review")}
+              onChange={e => onLabel?.({ ...decision.objection_labels, [item.id]: e.target.value as ObjectionLabel })}>
+              <option value="" disabled>尚未标注</option>
+              <option value="adopted">采纳</option><option value="already_known">已知</option><option value="disagree">不同意</option>
+            </select>
+          </label>)}
+          {reviewed && <p className="adopted-count">{adopted} 条改变了方案</p>}
+        </div>}
         {readOnlyReason ? (
           <p className="review-status">{readOnlyReason}</p>
         ) : decision.status === "awaiting_review" ? (
@@ -188,16 +201,16 @@ export function DecisionResult({
             <div className="review-buttons">
               <button
                 className="primary"
-                disabled={busy}
+                disabled={busy || writeDisabled}
                 onClick={() => onReview("accepted", note)}
               >
                 采纳建议
               </button>
-              <button disabled={busy} onClick={() => onReview("revised", note)}>
+              <button disabled={busy || writeDisabled} onClick={() => onReview("revised", note)}>
                 记录修改意见
               </button>
               <button
-                disabled={busy}
+                disabled={busy || writeDisabled}
                 onClick={() => onReview("deferred", note)}
               >
                 暂缓决定
@@ -216,6 +229,5 @@ export function DecisionResult({
 }
 
 function isSupportedWindow(value: string) {
-  const normalized = value.trim().replace(/\s+/g, " ").toLowerCase();
-  return ["14 天", "14天", "14 day", "14 days"].includes(normalized);
+  return /^(7|14|30|90|180|365)\s*(天|days?)$/i.test(value.trim());
 }

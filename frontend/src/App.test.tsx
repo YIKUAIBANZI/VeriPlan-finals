@@ -1,3 +1,5 @@
+import { createFixtureApi } from "./fixtures/mockApi";
+import { splitDecision, outcomeDecision } from "./fixtures/decisions";
 import {
   act,
   cleanup,
@@ -262,8 +264,8 @@ describe("decision workspace", () => {
     );
 
     expect(screen.getByLabelText("经营决策问题")).toHaveValue(input.question);
-    expect(screen.getByLabelText("时间窗口")).toHaveValue("14 天");
-    expect(screen.getByLabelText("时间窗口")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("时间窗口")).toHaveValue("14");
+    expect(screen.getByLabelText("时间窗口")).not.toHaveAttribute("readonly");
     expect(screen.getByLabelText("预算上限（元）")).toHaveValue(8000);
     fireEvent.click(screen.getByText("业务基线（可选）"));
     expect(screen.getByLabelText("月售后工单量")).toHaveValue(null);
@@ -308,16 +310,16 @@ describe("decision workspace", () => {
     );
 
     expect(screen.getByLabelText("经营决策问题")).toHaveValue(input.question);
-    expect(screen.getByLabelText("时间窗口")).toHaveValue("14 天");
+    expect(screen.getByLabelText("时间窗口")).toHaveValue("14");
   });
 
-  it("uses a fixed fourteen-day window for new decisions", async () => {
+  it("offers the six contract horizons for new decisions", async () => {
     render(<App api={fakeApi() as any} />);
 
     const window = await screen.findByLabelText("时间窗口");
-    expect(window).toHaveValue("14 天");
-    expect(window).toHaveAttribute("readonly");
-    expect(screen.getByText("当前版本固定为 14 天验证计划。")).toBeVisible();
+    expect(window).toHaveValue("14");
+    expect(window).not.toHaveAttribute("readonly");
+    expect(screen.getAllByRole("option")).toHaveLength(6);
   });
 
   it("downloads the canonical markdown and releases the object URL", async () => {
@@ -414,4 +416,78 @@ it("does not replace a newly created ledger row with a slow startup response", a
   expect(
     screen.getByRole("button", { name: new RegExp(input.question) }),
   ).toBeVisible();
+});
+
+it("persists an objection label before enabling review and preserves failure feedback", async () => {
+  const state = structuredClone(splitDecision);
+  const api = { ...fakeApi(state), labelObjections: vi.fn() };
+  let finish: (value: any) => void = () => {};
+  api.labelObjections.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<App api={api as any} />);
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(state.question.replace(/[？?]/g, "")) }));
+  fireEvent.change(await screen.findByLabelText("O1 风险标注"), { target: { value: "adopted" } });
+  expect(screen.getByRole("button", { name: "采纳建议" })).toBeDisabled();
+  expect(api.labelObjections).toHaveBeenCalledWith(state.id, { O1: "adopted" });
+  await act(async () => finish({ ...state, objection_labels: { O1: "adopted" } }));
+  expect(screen.getByRole("button", { name: "采纳建议" })).toBeEnabled();
+  api.labelObjections.mockRejectedValueOnce(new Error("标注保存失败"));
+  fireEvent.change(screen.getByLabelText("O1 风险标注"), { target: { value: "disagree" } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("标注保存失败");
+  expect(screen.getByLabelText("O1 风险标注")).toHaveValue("adopted");
+  expect(api.reviewDecision).not.toHaveBeenCalled();
+});
+
+it("saves outcomes and restores them from the ledger", async () => {
+  const api = createFixtureApi([outcomeDecision]);
+  render(<App api={api} />);
+  fireEvent.click(await screen.findByRole("button", { name: /要不要花三万元/ }));
+  fireEvent.change(await screen.findByLabelText("A1 实际值"), { target: { value: "10000" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存实际结果" }));
+  expect(await screen.findByText("-50%")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "新建决策" }));
+  fireEvent.click(screen.getByRole("button", { name: /要不要花三万元/ }));
+  expect(await screen.findByText("-50%")).toBeVisible();
+});
+
+it("records a retrospective from the sidebar without a workflow and restores it as terminal", async () => {
+  const api = createFixtureApi([]);
+  const run = vi.spyOn(api, "runDecision");
+  render(<App api={api} />);
+  fireEvent.click(screen.getByRole("button", { name: "我的偏差画像" }));
+  await screen.findByText("-38.5%");
+  fireEvent.click(screen.getByText("录入一个过去的决定", { selector: "summary" }));
+  fireEvent.change(screen.getByLabelText("过去的决策问题"), { target: { value: "过去是否应该投入三万元推广新产品？" } });
+  fireEvent.change(screen.getByLabelText("决策日期"), { target: { value: "2026-07-01" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加假设" }));
+  fireEvent.change(screen.getByLabelText("假设 1 标签"), { target: { value: "收入" } });
+  fireEvent.change(screen.getByLabelText("假设 1 数值"), { target: { value: "20000" } });
+  fireEvent.change(screen.getByLabelText("假设 1 实际值"), { target: { value: "12000" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存回溯记录" }));
+  expect(await screen.findByText("-40%")).toBeVisible();
+  expect(screen.queryByRole("list", { name: "工作流阶段" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存实际结果" })).not.toBeInTheDocument();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("keeps new writes disabled when Live is locked, including outcomes and labels", async () => {
+  const api = { ...createFixtureApi([{ ...outcomeDecision, mode: "live" }]), health: vi.fn(async () => ({ mode: "live" as const, database: "ok", live_available: false })) };
+  render(<App api={api} />);
+  await screen.findByText("真实模式未解锁");
+  expect(screen.getByRole("button", { name: "创建并开始研究" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: /要不要花三万元/ }));
+  expect(await screen.findByLabelText("O1 风险标注")).toBeDisabled();
+  expect(screen.getByLabelText("A1 实际值")).toBeDisabled();
+});
+
+it("copies a new snapshot without leaking server-assigned assumption IDs", async () => {
+  const api = createFixtureApi([{ ...splitDecision, mode: "live" }]);
+  const create = vi.spyOn(api, "createDecision");
+  render(<App api={api} />);
+  fireEvent.click(await screen.findByRole("button", { name: /要不要花三万元/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "复制条件并在当前模式新建" }));
+  expect(screen.getByLabelText("时间窗口")).toHaveValue("90");
+  expect(screen.getByLabelText("假设 1 数值")).toHaveValue(20000);
+  fireEvent.click(screen.getByRole("button", { name: "创建并开始研究" }));
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  expect(create.mock.calls[0][0].assumptions[0]).not.toHaveProperty("id");
 });

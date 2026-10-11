@@ -8,5 +8,5 @@ export default defineConfig({
     strictPort: true,
     proxy: { "/api": "http://127.0.0.1:8788" },
   },
-  test: { environment: "jsdom" },
+  test: { environment: "jsdom", setupFiles: ["./src/fixtures/testSetup.ts"] },
 });

@@ -4,13 +4,17 @@ export function Ledger({
   selected,
   onSelect,
   onNew,
+  onCalibration,
+  calibrationSelected,
 }: {
   items: Decision[];
   selected?: string;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onCalibration?: () => void;
+  calibrationSelected?: boolean;
 }) {
-  const reviewed = new Set(["accepted", "revised", "deferred"]);
+  const reviewed = new Set(["accepted", "revised", "deferred", "retrospective"]);
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -23,6 +27,7 @@ export function Ledger({
       <button className="new-button" onClick={onNew}>
         <span aria-hidden="true">＋</span> 新建决策
       </button>
+      {onCalibration && <button className="ledger-item calibration-nav" aria-current={calibrationSelected ? "page" : undefined} onClick={onCalibration}>我的偏差画像</button>}
       <nav aria-label="任务与决策账本">
         {[
           ["进行中的任务", false],

@@ -1,4 +1,4 @@
-import type { Decision, DecisionInput, Health, ReviewAction } from "./types";
+import type { Decision, DecisionInput, Health, ReviewAction, ObjectionLabels, OutcomeInput, RetrospectiveInput, CalibrationProfile } from "./types";
 async function fetchResponse(path: string, body?: unknown): Promise<Response> {
   let response: Response;
   try {
@@ -18,7 +18,7 @@ async function fetchResponse(path: string, body?: unknown): Promise<Response> {
     if (response.status === 404)
       throw new Error("未找到这个决策，请从账本重新选择。");
     if (response.status === 422)
-      throw new Error("请检查问题长度、预算和必填条件。");
+      throw new Error("请检查必填字段、数字范围和关联的假设或风险。");
     throw new Error("服务暂时不可用，请稍后重试。");
   }
   return response;
@@ -45,6 +45,13 @@ export const api = {
       action,
       note,
     }),
+  labelObjections: (id: string, labels: ObjectionLabels) =>
+    request<Decision>(`/decisions/${encodeURIComponent(id)}/objection-labels`, { labels }),
+  saveOutcomes: (id: string, input: OutcomeInput) =>
+    request<Decision>(`/decisions/${encodeURIComponent(id)}/outcomes`, input),
+  createRetrospective: (input: RetrospectiveInput) =>
+    request<Decision>("/retrospectives", input),
+  getCalibration: () => request<CalibrationProfile>("/calibration"),
   exportDecision: async (id: string) => {
     const response = await fetchResponse(
       `/decisions/${encodeURIComponent(id)}/export.md`,
