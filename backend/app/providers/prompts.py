@@ -86,7 +86,10 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
         raise ValueError(f"Unsupported model stage: {stage}")
 
     selected = _constraints(context)
-    if stage == "planning":
+    if stage == "ablation" and context.get("evidence"):
+        # Ablation arm C: a single call sees the same evidence the council saw.
+        selected["evidence"] = _evidence(context)
+    elif stage == "planning":
         selected["clarification"] = _output(context, "clarifying")
     elif stage == "analyzing":
         selected["planning"] = _output(context, "planning")
