@@ -183,3 +183,13 @@ def test_compat_mock_transport_runs_full_live_council_with_operation_ledger(tmp_
     assert len(calls) == 8 and all(c['status'] == 'succeeded' for c in calls)
     assert {c['logical_operation'] for c in calls if c['stage'] == 'analyzing'} == {'analyzing:opportunity', 'analyzing:cfo', 'analyzing:risk', 'analyzing:expert'}
     assert not any(d.is_retrospective for d in repo.list())
+
+
+def test_reasoning_wrapper_is_stripped_but_content_still_strict():
+    from app.providers.openai_compat import _strip_reasoning_wrapper
+
+    wrapped = '<think>\n用户要 JSON。\n</think>\n\n```json\n{"ok": true}\n```'
+    assert _strip_reasoning_wrapper(wrapped) == '{"ok": true}'
+    assert _strip_reasoning_wrapper('{"ok": true}') == '{"ok": true}'
+    # Only the outer wrapper goes; anything else is left for json.loads to reject.
+    assert _strip_reasoning_wrapper('说明文字 {"ok": true}') == '说明文字 {"ok": true}'

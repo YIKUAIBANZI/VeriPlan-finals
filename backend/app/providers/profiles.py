@@ -8,7 +8,7 @@ PROFILE_URLS = {
     'minimax': 'https://api.minimaxi.com/v1',
     'kimi': 'https://api.moonshot.cn/v1',
 }
-PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.5'}
+PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.6'}
 PROFILES = ('deepseek', *PROFILE_URLS)
 
 

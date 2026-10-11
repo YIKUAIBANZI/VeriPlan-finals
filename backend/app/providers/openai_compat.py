@@ -1,5 +1,6 @@
 """Allowlisted Chat Completions adapter with a bounded schema fallback."""
 import json
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -77,7 +78,7 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
         if (not isinstance(message, dict) or message.get('refusal') or message.get('tool_calls')
                 or message.get('role') != 'assistant' or not isinstance(message.get('content'), str)):
             raise ModelOutputError('model_contract_violation', ['response.message: assistant text required'])
-        return message['content']
+        return _strip_reasoning_wrapper(message['content'])
 
     @staticmethod
     def _schema_unsupported(response):
@@ -129,3 +130,16 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
                 raise ModelOutputError(code, ['response: invalid json' if code == 'model_invalid_json' else 'response: object required']) from None
             raise ProviderError(code) from None
         raise ProviderError('model_upstream_error')
+
+
+_THINK_BLOCK = re.compile(r'^\s*<think>.*?</think>\s*', re.DOTALL)
+_JSON_FENCE = re.compile(r'^```(?:json)?\s*\n(.*)\n```$', re.DOTALL)
+
+
+def _strip_reasoning_wrapper(text):
+    # Some providers (e.g. MiniMax M2.5) ignore response_format: they prepend a
+    # <think> block and fence the JSON. Only that outer wrapper is removed; the
+    # remaining text still goes through json.loads and the full contract.
+    text = _THINK_BLOCK.sub('', text, count=1).strip()
+    fenced = _JSON_FENCE.match(text)
+    return fenced.group(1) if fenced else text
