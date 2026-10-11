@@ -83,6 +83,8 @@ def run_smoke(*, authorized: bool, settings=None, model_provider=None, search_pr
                     elif event['status'] in {'completed', 'failed'} and stage in starts:
                         result['stages'][stage] = round((at - starts[stage]).total_seconds(), 4)
                 result['final_status'] = snapshot['status']
+                # Failure codes are redacted stable identifiers, safe to record.
+                result['failure'] = snapshot.get('failure')
         result['elapsed_seconds'] = round(monotonic() - started, 4)
         result['within_120_seconds'] = result['elapsed_seconds'] <= 120
         result['passed'] = result['passed'] and result['within_120_seconds']
