@@ -79,6 +79,8 @@ def test_live_workflow_joins_bounded_search_and_all_model_stages(tmp_path):
             "clarifying",
             "planning",
             "analyzing",
+            "analyzing",
+            "analyzing",
             "challenging",
             "delivering",
         ]

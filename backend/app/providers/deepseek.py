@@ -54,7 +54,7 @@ class DeepSeekModelProvider:
         *,
         call_context: ProviderCallContext | None = None,
     ) -> dict[str, Any]:
-        schema_name, schema = stage_schema(stage)
+        schema_name, schema = stage_schema(stage, member=context.get("_council_member"))
         instructions, prompt_input = build_prompt(stage, context)
         response_body, call_id = self._request(
             {

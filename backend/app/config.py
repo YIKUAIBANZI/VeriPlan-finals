@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     app_mode: Literal['demo', 'live'] = 'demo'
     enable_live_workflow: bool = False
     database_url: str = 'sqlite:///veriplan.db'
+    model_provider: Literal['deepseek', 'openai_compat'] = 'deepseek'
+    openai_compat_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    openai_compat_api_key: SecretStr | None = None
+    openai_compat_model: str = Field(default='deepseek-v4.1-flash', min_length=1)
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = 'deepseek-v4-flash'
     deepseek_timeout_seconds: int = Field(default=30, ge=1, le=120)
@@ -43,3 +47,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_domains(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return normalize_domains(value)
+
+    @field_validator("openai_compat_base_url")
+    @classmethod
+    def validate_compat_host(cls, value):
+        from app.providers.openai_compat import validate_base_url
+        return validate_base_url(value)

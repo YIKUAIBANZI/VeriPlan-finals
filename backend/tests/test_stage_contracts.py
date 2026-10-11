@@ -42,7 +42,7 @@ def test_contract_rejects_confirmed_constraint_rewrite():
 def test_contract_rejects_unknown_evidence_reference():
     context = context_with_evidence()
     payload = DemoModelProvider().generate("challenging", context)
-    payload["evidence_ids"] = ["unknown"]
+    payload["objections"][0]["evidence_ids"] = ["unknown"]
 
     with pytest.raises(ValueError, match="unknown evidence"):
         validate_stage_output("challenging", payload, context)
@@ -140,10 +140,10 @@ def test_planning_schema_separates_questions_from_post_research_gaps():
     assert "research_gaps" not in payload
 
 
-def test_contract_requires_each_analysis_perspective_once():
+def test_contract_requires_each_council_role_once():
     context = context_with_evidence()
     payload = DemoModelProvider().generate("analyzing", context)
-    payload["analyses"][2]["perspective"] = "增长"
+    payload["members"][2]["role"] = "opportunity"
 
-    with pytest.raises(ValidationError, match="perspectives"):
+    with pytest.raises(ValidationError, match="roles"):
         validate_stage_output("analyzing", payload, context)

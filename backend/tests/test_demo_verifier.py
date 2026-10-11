@@ -13,6 +13,7 @@ def _run(output: Path) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["DEEPSEEK_API_KEY"] = "must-not-appear-deepseek"
     environment["TAVILY_API_KEY"] = "must-not-appear-tavily"
+    environment["OPENAI_COMPAT_API_KEY"] = "must-not-appear-compat"
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--output", str(output)],
         cwd=ROOT,
@@ -46,6 +47,12 @@ def test_verifier_proves_offline_demo_gates_and_export(tmp_path):
         "clarification_confirmed": True,
         "final_review": "deferred",
     }
+    assert evidence["council"]["is_split"] is True
+    assert evidence["challenge"]["blocker_count"] >= 1
+    assert evidence["challenge"]["novel_objection_count"] >= 1
+    assert evidence["challenge"]["calibration_warning_count"] >= 1
+    assert evidence["outcome"]["error_pct"] == -40
+    assert evidence["calibration"]["sample_count"] >= 3
     assert evidence["all_evidence_demo"] is True
     assert evidence["evidence_domains"] == ["demo.invalid"]
     assert evidence["evidence_count"] >= 3
@@ -63,6 +70,7 @@ def test_verifier_proves_offline_demo_gates_and_export(tmp_path):
     rendered = output.read_text(encoding="utf-8") + result.stdout + result.stderr
     assert "must-not-appear-deepseek" not in rendered
     assert "must-not-appear-tavily" not in rendered
+    assert "must-not-appear-compat" not in rendered
 
 
 def test_verifier_refuses_to_overwrite_existing_evidence(tmp_path):

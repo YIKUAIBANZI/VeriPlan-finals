@@ -1,6 +1,7 @@
 """Strict output contracts shared by every model provider."""
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
@@ -8,7 +9,7 @@ from pydantic import Field, StringConstraints, model_validator
 from app.schemas import StrictModel
 
 
-MODEL_STAGES = ("clarifying", "planning", "analyzing", "challenging", "delivering")
+MODEL_STAGES = ("clarifying", "planning", "analyzing", "challenging", "delivering", "ablation")
 TrimmedText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
@@ -22,6 +23,10 @@ RequiredEvidenceIds = Annotated[
     list[TrimmedText],
     Field(min_length=1, max_length=10),
 ]
+
+
+class AblationOutput(StrictModel):
+    risks: list[TrimmedText] = Field(min_length=1, max_length=20)
 
 
 class ClarifyingOutput(StrictModel):
@@ -40,29 +45,64 @@ class PlanningOutput(StrictModel):
     research_questions: list[TrimmedText] = Field(min_length=1, max_length=10)
 
 
-class AnalysisItem(StrictModel):
-    perspective: Literal["增长", "成本", "风险"]
-    conclusion: TrimmedText
+COUNCIL_ROLES = ("opportunity", "cfo", "risk")
+
+
+class MemberOpinion(StrictModel):
+    role: Literal["opportunity", "cfo", "risk"]
+    stance: Literal["support", "oppose", "conditional"]
+    headline: str = Field(min_length=1, max_length=60)
+    reasoning: TrimmedText
+    key_points: list[TrimmedText] = Field(min_length=1, max_length=4)
+    challenged_assumption_ids: list[str] = Field(max_length=8)
     evidence_ids: EvidenceIds
+    confidence: int = Field(ge=0, le=100)
+
+
+class Disagreement(StrictModel):
+    stances: dict[str, Literal["support", "oppose", "conditional"]]
+    is_split: bool
 
 
 class AnalyzingOutput(StrictModel):
     summary: TrimmedText
-    analyses: list[AnalysisItem] = Field(min_length=3, max_length=3)
+    members: list[MemberOpinion] = Field(min_length=3, max_length=3)
+    disagreement: Disagreement
 
     @model_validator(mode="after")
-    def requires_each_perspective_once(self):
-        perspectives = {item.perspective for item in self.analyses}
-        if perspectives != {"增长", "成本", "风险"}:
-            raise ValueError("analyses must contain all three perspectives exactly once")
+    def requires_each_role_once(self):
+        if {item.role for item in self.members} != set(COUNCIL_ROLES):
+            raise ValueError("members must contain all three roles exactly once")
+        expected = council_disagreement([item.model_dump() for item in self.members])
+        if self.disagreement.model_dump() != expected:
+            raise ValueError("disagreement must be computed from member stances")
         return self
+
+
+def council_disagreement(members):
+    stances = {item["role"]: item["stance"] for item in members}
+    return {"stances": stances, "is_split": {"support", "oppose"} <= set(stances.values())}
+
+
+class Objection(StrictModel):
+    id: str = Field(pattern=r"^O[1-6]$")
+    text: TrimmedText
+    severity: Literal["blocker", "major", "minor"]
+    targets_assumption_ids: list[str] = Field(max_length=8)
+    overlaps_known_risk_index: int | None = Field(ge=0, strict=True)
+    evidence_ids: EvidenceIds
 
 
 class ChallengingOutput(StrictModel):
     summary: TrimmedText
-    objection: TrimmedText
+    premortem: TrimmedText
+    objections: list[Objection] = Field(min_length=1, max_length=6)
     hidden_assumptions: list[TrimmedText] = Field(min_length=1, max_length=5)
-    evidence_ids: EvidenceIds
+
+
+class DeliveryCondition(StrictModel):
+    objection_id: str
+    condition: TrimmedText
 
 
 class FactStatement(StrictModel):
@@ -86,7 +126,8 @@ class ActionItem(StrictModel):
 
 class DeliveringOutput(StrictModel):
     summary: TrimmedText
-    recommendation: Literal["pilot_before_rollout", "do_not_pilot", "defer"]
+    recommendation: Literal["go", "go_with_conditions", "small_test_first", "defer", "no_go"]
+    conditions: list[DeliveryCondition] = Field(default_factory=list, max_length=6)
     support_score: int = Field(ge=0, le=100)
     score_explanation: TrimmedText
     facts: list[FactStatement] = Field(max_length=10)
@@ -108,6 +149,7 @@ StageOutput = (
 )
 
 _STAGE_MODELS = {
+    "ablation": AblationOutput,
     "clarifying": ClarifyingOutput,
     "planning": PlanningOutput,
     "analyzing": AnalyzingOutput,
@@ -123,8 +165,8 @@ def _require_model(stage: str):
         raise ValueError(f"Unsupported model stage: {stage}") from error
 
 
-def stage_schema(stage: str) -> tuple[str, dict[str, Any]]:
-    model = _require_model(stage)
+def stage_schema(stage: str, *, member: str | None = None) -> tuple[str, dict[str, Any]]:
+    model = MemberOpinion if stage == "analyzing" and member in COUNCIL_ROLES else _require_model(stage)
     return f"veriplan_{stage}", model.model_json_schema()
 
 
@@ -143,9 +185,10 @@ def _validate_confirmed_constraints(
 
 def _referenced_evidence_ids(stage: str, result: StageOutput) -> set[str]:
     if stage == "analyzing":
-        return {item for analysis in result.analyses for item in analysis.evidence_ids}
+        members = [result] if isinstance(result, MemberOpinion) else result.members
+        return {item for member in members for item in member.evidence_ids}
     if stage == "challenging":
-        return set(result.evidence_ids)
+        return {ref for item in result.objections for ref in item.evidence_ids}
     if stage == "delivering":
         statements = [*result.facts, *result.inferences]
         return {item for statement in statements for item in statement.evidence_ids}
@@ -196,9 +239,50 @@ def validate_stage_output(
     payload: Mapping[str, Any],
     context: Mapping[str, Any],
 ) -> dict[str, Any]:
-    result = _require_model(stage).model_validate(payload)
+    payload = dict(payload)
+    computed = {}
+    if stage == "challenging":
+        warnings = deepcopy(context.get("calibration_warnings", []))
+        novel = sum(item.get("overlaps_known_risk_index") is None for item in payload.get("objections", []) if isinstance(item, dict))
+        computed = {"calibration_warnings": warnings, "novel_objection_count": novel}
+        for key, value in computed.items():
+            if key in payload and payload.pop(key) != value:
+                raise ValueError("model changed code-generated calibration or novel count")
+    member = context.get("_council_member") if stage == "analyzing" else None
+    result = (MemberOpinion if member else _require_model(stage)).model_validate(payload)
+    if stage == "analyzing":
+        members = [result] if member else result.members
+        if member and result.role != member:
+            raise ValueError("member role does not match requested role")
+        known = {item["id"] for item in context.get("assumptions", []) if "id" in item}
+        if any(set(item.challenged_assumption_ids) - known for item in members):
+            raise ValueError("unknown assumption reference")
     _validate_confirmed_constraints(stage, result, context)
     _validate_evidence_references(stage, result, context)
     _validate_action_budget(stage, result, context)
     _validate_evidence_gap(stage, result, context)
-    return result.model_dump(mode="json")
+    if stage == "challenging":
+        known = {item["id"] for item in context.get("assumptions", []) if "id" in item}
+        objections = result.objections
+        if len({item.id for item in objections}) != len(objections):
+            raise ValueError("duplicate objection ID")
+        for item in objections:
+            if set(item.targets_assumption_ids) - known:
+                raise ValueError("unknown assumption reference")
+            if item.overlaps_known_risk_index is not None and item.overlaps_known_risk_index >= len(context.get("known_risks", [])):
+                raise ValueError("unknown known risk index")
+            if known and not item.targets_assumption_ids and item.overlaps_known_risk_index is None:
+                raise ValueError("objection must target an assumption or known risk")
+        for warning in computed["calibration_warnings"]:
+            if not any(set(warning["assumption_ids"]) <= set(item.targets_assumption_ids) for item in objections):
+                raise ValueError("calibration warning must be covered by an objection")
+    if stage == "delivering":
+        objections = context.get("outputs", {}).get("challenging", {}).get("objections", [])
+        known = {item["id"] for item in objections}
+        blockers = {item["id"] for item in objections if item["severity"] == "blocker"}
+        conditions = {item.objection_id for item in result.conditions}
+        if conditions - known:
+            raise ValueError("condition references unknown objection")
+        if blockers and (result.recommendation == "go" or not blockers <= conditions):
+            raise ValueError("blocker requires a non-go recommendation and covering conditions")
+    return result.model_dump(mode="json") | computed

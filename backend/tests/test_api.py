@@ -39,7 +39,7 @@ def test_create_normalizes_supported_window_and_rejects_other_windows(tmp_path):
     decision_id = created.json()["id"]
     assert client.get(f"/api/decisions/{decision_id}").json()["time_window"] == "14 天"
 
-    for unsupported in ("3 days", "30 天"):
+    for unsupported in ("3 days", "31 天"):
         rejected = dict(supported, time_window=unsupported)
         assert client.post("/api/decisions", json=rejected).status_code == 422
 

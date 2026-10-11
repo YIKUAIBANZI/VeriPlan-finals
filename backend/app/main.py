@@ -7,10 +7,11 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
 from app.config import Settings
 from app.providers.base import ModelProvider, SearchProvider
 from app.providers.deepseek import DeepSeekModelProvider
+from app.providers.openai_compat import OpenAICompatModelProvider
 from app.providers.tavily import TavilySearchProvider
 from app.repository import DecisionRepository
 from app.markdown_export import render_decision_markdown
-from app.schemas import DecisionCreate, ReviewRequest
+from app.schemas import DecisionCreate, ReviewRequest, ObjectionLabelsRequest, InvalidInput, OutcomeRequest, RetrospectiveCreate
 from app.workflow import WorkflowEngine
 
 
@@ -27,20 +28,26 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     repository = DecisionRepository(database_path if database_path is not None else settings.database_url)
-    live_model_configured = _has_secret(settings.deepseek_api_key)
+    model_key = settings.deepseek_api_key if settings.model_provider == 'deepseek' else settings.openai_compat_api_key
+    live_model_configured = _has_secret(model_key)
     live_search_configured = _has_secret(settings.tavily_api_key)
     live_requested = settings.app_mode == 'live' and settings.enable_live_workflow
 
     constructed_model = model_provider
     constructed_search = search_provider
     if live_requested and live_model_configured and constructed_model is None:
-        constructed_model = DeepSeekModelProvider(
-            api_key=settings.deepseek_api_key,
-            model=settings.deepseek_model,
-            timeout_seconds=settings.deepseek_timeout_seconds,
-            max_output_tokens=settings.deepseek_max_output_tokens,
-            recorder=repository,
-        )
+        if settings.model_provider == 'openai_compat':
+            constructed_model = OpenAICompatModelProvider(
+                api_key=model_key, base_url=settings.openai_compat_base_url,
+                model=settings.openai_compat_model, timeout_seconds=settings.deepseek_timeout_seconds,
+                max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository,
+            )
+        else:
+            constructed_model = DeepSeekModelProvider(
+                api_key=model_key, model=settings.deepseek_model,
+                timeout_seconds=settings.deepseek_timeout_seconds,
+                max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository,
+            )
     if live_requested and live_search_configured and constructed_search is None:
         constructed_search = TavilySearchProvider(
             api_key=settings.tavily_api_key,
@@ -96,6 +103,8 @@ def create_app(
             return operation(*args, **kwargs)
         except KeyError as error:
             raise HTTPException(status_code=404, detail='Decision not found') from error
+        except InvalidInput as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -179,6 +188,28 @@ def create_app(
             note=payload.note,
         )
         return repository.get(decision_id)
+
+    @app.post('/api/decisions/{decision_id}/objection-labels')
+    def label_objections(decision_id: str, payload: ObjectionLabelsRequest):
+        require_mutations_available()
+        invoke(repository.save_objection_labels, decision_id, payload.labels, mode=settings.app_mode)
+        return repository.get(decision_id)
+
+    @app.post('/api/decisions/{decision_id}/outcomes')
+    def record_outcomes(decision_id: str, payload: OutcomeRequest):
+        require_mutations_available()
+        invoke(repository.save_outcome, decision_id, payload, mode=settings.app_mode)
+        return repository.get(decision_id)
+
+    @app.post('/api/retrospectives', status_code=201)
+    def create_retrospective(payload: RetrospectiveCreate):
+        require_mutations_available()
+        return invoke(repository.create_retrospective, payload, mode=settings.app_mode)
+
+    @app.get('/api/calibration')
+    def get_calibration():
+        from app.calibration import calibration_profile
+        return calibration_profile(repository.list(), mode=settings.app_mode)
 
     return app
 

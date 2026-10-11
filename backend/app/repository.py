@@ -20,6 +20,10 @@ from app.models import (
 from app.baseline import analyze_business_baseline
 from app.schemas import (
     BusinessBaseline,
+    InvalidInput,
+    Assumption,
+    OutcomeRequest,
+    RetrospectiveCreate,
     DecisionCreate,
     DecisionSnapshot,
     DecisionStatus,
@@ -59,6 +63,18 @@ class DecisionRepository:
             statements.append(
                 "ALTER TABLE decisions ADD COLUMN business_baseline_json TEXT NOT NULL DEFAULT '{}'"
             )
+        additions = {
+            "scenario": "VARCHAR(32) NOT NULL DEFAULT 'ai_tool_pilot'",
+            "horizon_days": "INTEGER NOT NULL DEFAULT 14",
+            "known_risks_json": "TEXT NOT NULL DEFAULT '[]'",
+            "assumptions_json": "TEXT NOT NULL DEFAULT '[]'",
+            "objection_labels_json": "TEXT NOT NULL DEFAULT '{}'",
+            "outcomes_json": "TEXT NOT NULL DEFAULT '[]'",
+            "is_retrospective": "BOOLEAN NOT NULL DEFAULT 0",
+        }
+        for column, definition in additions.items():
+            if column not in decision_columns:
+                statements.append(f"ALTER TABLE decisions ADD COLUMN {column} {definition}")
         if "is_demo" not in evidence_columns:
             statements.append(
                 "ALTER TABLE evidence_cards ADD COLUMN is_demo BOOLEAN NOT NULL DEFAULT 1"
@@ -81,7 +97,12 @@ class DecisionRepository:
         with self._sessions.begin() as session:
             record = DecisionRecord(
                 id=str(uuid4()),
-                **payload.model_dump(exclude={"business_baseline"}),
+                **payload.model_dump(exclude={"business_baseline", "known_risks", "assumptions"}),
+                known_risks_json=json.dumps(payload.known_risks),
+                assumptions_json=json.dumps([
+                    {**item.model_dump(), "id": f"A{index}"}
+                    for index, item in enumerate(payload.assumptions, 1)
+                ]),
                 business_baseline_json=payload.business_baseline.model_dump_json(),
                 status=DecisionStatus.draft.value,
                 mode=mode,
@@ -358,6 +379,55 @@ class DecisionRepository:
             record.status = transition(DecisionStatus(record.status), DecisionStatus(action)).value
             record.review_note = note
 
+    def save_objection_labels(self, decision_id: str, labels: dict, *, mode: str) -> None:
+        with self._sessions.begin() as session:
+            record = self._require(session, decision_id)
+            if record.mode != mode:
+                raise ValueError("Decision mode does not match the current application mode")
+            if record.status not in {"awaiting_review", "accepted", "revised", "deferred"}:
+                raise ValueError("Objection labels require the review gate")
+            objections = json.loads(record.output_json).get("challenging", {}).get("objections", [])
+            if set(labels) - {item["id"] for item in objections}:
+                raise InvalidInput("Unknown objection ID")
+            record.objection_labels_json = json.dumps(json.loads(record.objection_labels_json) | labels)
+
+    def save_outcome(self, decision_id: str, payload: OutcomeRequest, *, mode: str) -> None:
+        from app.calibration import APPROVED, calculate_actuals
+        with self._sessions.begin() as session:
+            record = self._require(session, decision_id)
+            if record.mode != mode:
+                raise ValueError("Decision mode does not match the current application mode")
+            if record.status not in APPROVED:
+                raise ValueError("Outcomes require a completed human review")
+            actuals = calculate_actuals([Assumption(**item) for item in json.loads(record.assumptions_json)], payload.actuals)
+            outcomes = [item for item in json.loads(record.outcomes_json) if item['checkpoint'] != payload.checkpoint]
+            outcomes.append(dict(checkpoint=payload.checkpoint, note=payload.note,
+                                 recorded_at=datetime.now(UTC).isoformat(), actuals=actuals))
+            record.outcomes_json = json.dumps(outcomes)
+
+    def create_retrospective(self, payload: RetrospectiveCreate, *, mode: str = "demo",
+                             seed_id: str | None = None) -> DecisionSnapshot:
+        from app.calibration import calculate_actuals
+        assumptions = [Assumption(**item.model_dump(), id=f'A{index}') for index, item in enumerate(payload.assumptions, 1)]
+        actuals = calculate_actuals(assumptions, payload.actuals)
+        with self._sessions.begin() as session:
+            record = DecisionRecord(
+                id=seed_id or str(uuid4()), question=payload.question, scenario=payload.scenario,
+                time_window='90 天', horizon_days=90, budget_limit=0, primary_goal='回溯校准',
+                business_baseline_json='{}', known_risks_json='[]',
+                assumptions_json=json.dumps([item.model_dump() for item in assumptions]),
+                objection_labels_json='{}',
+                outcomes_json=json.dumps([dict(checkpoint='custom', recorded_at=datetime.now(UTC).isoformat(),
+                                               note=payload.note, actuals=actuals)]),
+                is_retrospective=True, status='retrospective', mode=mode, review_note=None,
+                output_json=json.dumps({'retrospective': dict(decision_date=payload.decision_date.isoformat(),
+                                                              note=payload.note, is_synthetic=seed_id is not None)}),
+                created_at=datetime.combine(payload.decision_date, datetime.min.time(), tzinfo=UTC) if seed_id else datetime.now(UTC),
+            )
+            session.add(record)
+            session.flush()
+            return self._snapshot(record)
+
     def list(self) -> list[DecisionSnapshot]:
         with self._sessions() as session:
             records = session.scalars(select(DecisionRecord).order_by(DecisionRecord.created_at.desc()).options(selectinload(DecisionRecord.evidence), selectinload(DecisionRecord.events), selectinload(DecisionRecord.research_queries))).all()
@@ -440,6 +510,13 @@ class DecisionRepository:
         )
         return DecisionSnapshot(
             mode=record.mode,
+            scenario=record.scenario,
+            horizon_days=record.horizon_days,
+            known_risks=json.loads(record.known_risks_json),
+            assumptions=json.loads(record.assumptions_json),
+            objection_labels=json.loads(record.objection_labels_json),
+            outcomes=json.loads(record.outcomes_json),
+            is_retrospective=record.is_retrospective,
             research_queries=[
                 DecisionRepository._research_query(item)
                 for item in record.research_queries

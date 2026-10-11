@@ -30,6 +30,13 @@ class DecisionRecord(Base):
     business_baseline_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}", server_default=text("'{}'")
     )
+    scenario: Mapped[str] = mapped_column(String(32), default="ai_tool_pilot", server_default="ai_tool_pilot")
+    horizon_days: Mapped[int] = mapped_column(Integer, default=14, server_default="14")
+    known_risks_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    assumptions_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    objection_labels_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    outcomes_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    is_retrospective: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     status: Mapped[str] = mapped_column(String(32))
     mode: Mapped[str] = mapped_column(
         String(8), nullable=False, default="demo", server_default=text("'demo'")
