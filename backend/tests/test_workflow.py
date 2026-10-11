@@ -42,7 +42,7 @@ def test_demo_outputs_reference_synthetic_evidence_and_constraints(tmp_path):
     assert snapshot.mode == 'demo'
     assert all(card.is_demo and '.invalid/' in card.source_url for card in snapshot.evidence)
     assert len(set(snapshot.outputs['planning']['queries'])) >= 2
-    assert len(snapshot.outputs['analyzing']['members']) == 3
+    assert len(snapshot.outputs['analyzing']['members']) == 4
     assert snapshot.outputs['challenging']['hidden_assumptions']
     assert snapshot.memo['facts'] and snapshot.memo['inferences']
     assert snapshot.memo['support_score'] <= 59  # synthetic fixtures cannot establish real support

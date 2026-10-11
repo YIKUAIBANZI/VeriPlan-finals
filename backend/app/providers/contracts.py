@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, StringConstraints, model_validator
 
 from app.schemas import StrictModel
+from app.providers.council import ExpertKind, EXPERT_KINDS, select_expert, selected_expert
 from app.providers.output_validation import ContractViolation
 
 
@@ -41,16 +42,19 @@ class ClarifyingOutput(StrictModel):
 
 
 class PlanningOutput(StrictModel):
+    expert_kind: ExpertKind
+    expert_reason: str = Field(min_length=1, max_length=80)
     summary: TrimmedText
     queries: list[QueryText] = Field(min_length=2, max_length=5)
     research_questions: list[TrimmedText] = Field(min_length=1, max_length=10)
 
 
-COUNCIL_ROLES = ("opportunity", "cfo", "risk")
+COUNCIL_ROLES = ("opportunity", "cfo", "risk", "expert")
 
 
 class MemberOpinion(StrictModel):
-    role: Literal["opportunity", "cfo", "risk"]
+    role: Literal["opportunity", "cfo", "risk", "expert"]
+    expert_kind: ExpertKind | None = None
     stance: Literal["support", "oppose", "conditional"]
     headline: str = Field(min_length=1, max_length=60)
     reasoning: TrimmedText
@@ -60,6 +64,11 @@ class MemberOpinion(StrictModel):
     confidence: int = Field(ge=0, le=100)
 
 
+class RecordedMemberOpinion(MemberOpinion):
+    model_label: str | None = None
+    fallback_from: str | None = None
+
+
 class Disagreement(StrictModel):
     stances: dict[str, Literal["support", "oppose", "conditional"]]
     is_split: bool
@@ -67,13 +76,13 @@ class Disagreement(StrictModel):
 
 class AnalyzingOutput(StrictModel):
     summary: TrimmedText
-    members: list[MemberOpinion] = Field(min_length=3, max_length=3)
+    members: list[RecordedMemberOpinion] = Field(min_length=4, max_length=4)
     disagreement: Disagreement
 
     @model_validator(mode="after")
     def requires_each_role_once(self):
         if {item.role for item in self.members} != set(COUNCIL_ROLES):
-            raise ValueError("members must contain all three roles exactly once")
+            raise ValueError("members must contain all four roles exactly once")
         expected = council_disagreement([item.model_dump() for item in self.members])
         if self.disagreement.model_dump() != expected:
             raise ValueError("disagreement must be computed from member stances")
@@ -240,6 +249,11 @@ def validate_stage_output(
     # Confirmed input belongs to the server; model wording is never authoritative.
     payload = dict(payload) | _confirmed_constraints(stage, context)
     computed = {}
+    if stage == "planning":
+        selection = select_expert(payload, context)
+        payload.pop("expert_source", None)
+        payload.update({key: selection[key] for key in ("expert_kind", "expert_reason")})
+        computed = {"expert_source": selection["expert_source"]}
     if stage == "challenging":
         warnings = deepcopy(context.get("calibration_warnings", []))
         items = payload.get("objections", [])
@@ -258,6 +272,11 @@ def validate_stage_output(
         members = [result] if member else result.members
         if member and result.role != member:
             raise ContractViolation("role", "requested role mismatch", "member role does not match requested role")
+        for item in members:
+            if item.role == "expert" and item.expert_kind != selected_expert(context):
+                raise ContractViolation("expert_kind", "selected expert mismatch", "expert kind must match planning")
+            if item.role != "expert" and item.expert_kind is not None:
+                raise ContractViolation("expert_kind", "only expert may specify kind", "expert kind requires expert role")
         known = {item["id"] for item in context.get("assumptions", []) if "id" in item}
         if any(set(item.challenged_assumption_ids) - known for item in members):
             raise ContractViolation("challenged_assumption_ids", "unknown id", "unknown assumption reference")

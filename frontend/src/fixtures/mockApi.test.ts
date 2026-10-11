@@ -13,6 +13,7 @@ it("runs locally through both gates and exposes member completion snapshots", as
   expect((await api.runDecision(created.id)).status).toBe("analyzing");
   expect((await api.getDecision(created.id)).events.filter(e => e.status === "completed")).toHaveLength(1);
   await api.getDecision(created.id); await api.getDecision(created.id);
+  await api.getDecision(created.id);
   const ready = await api.getDecision(created.id);
   expect(ready.status).toBe("awaiting_review");
   await api.labelObjections(created.id, { O1: "adopted" });
@@ -32,4 +33,19 @@ it("overwrites checkpoints, rejects premature outcomes and records retrospective
   expect(past.is_retrospective).toBe(true);
   await expect(api.runDecision(past.id)).rejects.toThrow();
   expect((await api.getCalibration()).samples.some(s => s.source === "retrospective")).toBe(true);
+});
+
+it("uses scenario experts consistently in planning, events and four-seat output", async () => {
+  const api = createFixtureApi([]);
+  const created = await api.createDecision(scenarioExamples.big_order);
+  await api.runDecision(created.id); await api.confirmDecision(created.id);
+  const started = await api.runDecision(created.id);
+  expect(started.outputs.planning?.expert_kind).toBe("operations");
+  expect(started.events.filter(e => e.status === "started")).toHaveLength(4);
+  for (let index = 0; index < 4; index++) await api.getDecision(created.id);
+  const ready = await api.getDecision(created.id);
+  expect(ready.status).toBe("awaiting_review");
+  expect(ready.outputs.analyzing.members).toHaveLength(4);
+  expect(ready.outputs.analyzing.members?.find(m => m.role === "expert")?.expert_kind).toBe("operations");
+  expect(ready.events.find(e => e.stage === "council:expert" && e.status === "completed")?.summary).toContain("运营产能专家");
 });

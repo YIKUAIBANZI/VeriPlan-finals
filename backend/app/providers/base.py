@@ -19,6 +19,7 @@ class ProviderCallContext:
     logical_operation: str
     stage: str | None = None
     research_query_id: int | None = None
+    single_attempt: bool = False
 
 
 class AttemptRecorder(Protocol):
@@ -28,6 +29,8 @@ class AttemptRecorder(Protocol):
         context: ProviderCallContext,
         provider: str,
         attempt_number: int,
+        profile: str | None = None,
+        model: str | None = None,
     ) -> int: ...
 
     def finish_provider_attempt(

@@ -160,12 +160,13 @@ def test_compat_mock_transport_runs_full_live_council_with_operation_ledger(tmp_
         stage, selected = message['stage'], message['context']
         selected.setdefault('evidence', [])
         selected['outputs'] = {
+            'planning': selected.get('planning', {}),
             'researching': selected.get('research', {}),
             'challenging': selected.get('challenge', {}),
         }
         if stage == 'analyzing':
             system = body['messages'][0]['content']
-            role = next(role for role in ('opportunity', 'cfo', 'risk') if f'本次独立席位 {role}' in system)
+            role = next(role for role in ('opportunity', 'cfo', 'risk', 'expert') if f'本次独立席位 {role}' in system)
             selected['_council_member'] = role
             seen_roles.append(role)
         return response(DemoModelProvider().generate(stage, selected))
@@ -177,8 +178,8 @@ def test_compat_mock_transport_runs_full_live_council_with_operation_ledger(tmp_
         result = engine.run(decision.id)
     finally: model.close()
     assert result.status == 'awaiting_review', result.failure
-    assert set(seen_roles) == {'opportunity', 'cfo', 'risk'}
+    assert set(seen_roles) == {'opportunity', 'cfo', 'risk', 'expert'}
     calls = repo.list_provider_calls(decision.id)
-    assert len(calls) == 7 and all(c['status'] == 'succeeded' for c in calls)
-    assert {c['logical_operation'] for c in calls if c['stage'] == 'analyzing'} == {'analyzing:opportunity', 'analyzing:cfo', 'analyzing:risk'}
+    assert len(calls) == 8 and all(c['status'] == 'succeeded' for c in calls)
+    assert {c['logical_operation'] for c in calls if c['stage'] == 'analyzing'} == {'analyzing:opportunity', 'analyzing:cfo', 'analyzing:risk', 'analyzing:expert'}
     assert not any(d.is_retrospective for d in repo.list())

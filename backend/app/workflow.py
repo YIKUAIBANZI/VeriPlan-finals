@@ -1,5 +1,6 @@
 """Persisted stages with explicit human gate and one runner per decision/process."""
 from threading import Lock
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Literal
@@ -11,6 +12,7 @@ from app.providers.base import (
     SearchProvider,
 )
 from app.providers.contracts import COUNCIL_ROLES, council_disagreement, validate_stage_output
+from app.providers.council import EXPERT_LABELS, selected_expert
 from app.providers.demo import DemoModelProvider, DemoSearchProvider
 from app.providers.search_safety import canonicalize_public_https_url
 from app.repository import DecisionRepository
@@ -81,11 +83,13 @@ class WorkflowEngine:
         search_provider: SearchProvider | None = None,
         *,
         mode: Literal["demo", "live"] = "demo",
+        council_providers: dict[str, ModelProvider] | None = None,
     ):
         self._repository = repository
         self._model = model_provider or DemoModelProvider()
         self._search = search_provider or DemoSearchProvider()
         self._mode = mode
+        self._council_providers = council_providers or {}
         self._lock = Lock()
         self._active: set[str] = set()
 
@@ -346,27 +350,45 @@ class WorkflowEngine:
             'baseline_analysis', 'evidence',
         )}
         shared['outputs'] = {key: context['outputs'][key] for key in ('planning', 'researching') if key in context['outputs']}
-        role_labels = {'opportunity': '机会官', 'cfo': '财务官', 'risk': '风险官'}
+        role_labels = {'opportunity': '机会官', 'cfo': '财务官', 'risk': '风险官', 'expert': EXPERT_LABELS[selected_expert(shared)] + '专家'}
         stance_labels = {'support': '支持', 'oppose': '反对', 'conditional': '有条件支持'}
 
         def generate(role):
             member_context = deepcopy(shared)
             member_context['_council_member'] = role
             self._repository.append_event(snapshot.id, stage=f'council:{role}', status='started', summary=f'{role_labels[role]}：开始独立评估')
+            provider = self._council_providers.get(role, self._model)
+            operation = ProviderCallContext(decision_id=snapshot.id,
+                                            logical_operation=f'analyzing:{role}', stage='analyzing')
+
+            def invoke(selected, call):
+                try:
+                    return validate_stage_output('analyzing', selected.generate(
+                        'analyzing', deepcopy(member_context), call_context=call), member_context)
+                except (TypeError, ValueError) as error:
+                    raise ProviderError('model_contract_violation') from error
+
+            fallback_from = None
             try:
-                opinion = validate_stage_output('analyzing', self._model.generate(
-                    'analyzing', member_context, call_context=ProviderCallContext(
-                        decision_id=snapshot.id, logical_operation=f'analyzing:{role}', stage='analyzing',
-                    )), member_context)
-            except (TypeError, ValueError) as error:
-                raise ProviderError('model_contract_violation') from error
+                opinion = invoke(provider, operation)
+            except ProviderError as error:
+                # An unavailable audit ledger must never be bypassed via another provider.
+                if provider is self._model or error.code == 'provider_audit_failed':
+                    raise
+                fallback_from = getattr(provider, 'profile', 'custom')
+                provider = self._model
+                opinion = invoke(provider, replace(operation,
+                    logical_operation=operation.logical_operation + ':fallback', single_attempt=True))
+            opinion['model_label'] = getattr(provider, 'model_label', '自定义模型')
+            if fallback_from:
+                opinion['fallback_from'] = fallback_from
             self._repository.append_event(snapshot.id, stage=f'council:{role}', status='completed', summary=f"{role_labels[role]}：{stance_labels[opinion['stance']]}——{opinion['headline']}")
             return opinion
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(generate, role) for role in COUNCIL_ROLES]
             members = [future.result() for future in futures]
         return validate_stage_output('analyzing', {
-            'summary': '三位委员已完成独立评估。',
+            'summary': '四位委员已完成独立评估。',
             'members': members, 'disagreement': council_disagreement(members),
         }, context)

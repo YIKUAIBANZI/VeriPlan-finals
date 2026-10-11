@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.schemas import DecisionSnapshot
+from app.providers.council import EXPERT_LABELS
 
 
 _BASELINE_LABELS = (
@@ -230,6 +231,10 @@ def _append_council_details(lines: list[str], snapshot: DecisionSnapshot) -> Non
         for member in council['members']:
             lines.append(f"| {member['role']} | {stances.get(member['stance'], member['stance'])} | {_cell(member['headline'])} | {member['confidence']}% |")
         lines.append('')
+        planning = snapshot.outputs.get('planning', {})
+        if any(member['role'] == 'expert' for member in council['members']):
+            kind = next(member.get('expert_kind') for member in council['members'] if member['role'] == 'expert')
+            lines.extend([f"本题加派：{EXPERT_LABELS.get(kind, '专项')}专家；{_inline(planning.get('expert_reason', ''))}", ''])
         for member in council['members']:
             lines.append(f"- {member['role']}：{_inline(member['reasoning'])}；假设：{', '.join(member['challenged_assumption_ids']) or '无'}；证据：{', '.join(member['evidence_ids']) or '无'}")
             lines.extend(f"  - {_inline(point)}" for point in member['key_points'])

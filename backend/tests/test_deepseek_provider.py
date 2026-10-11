@@ -68,7 +68,7 @@ class AttemptSpy:
         self.started = []
         self.finished = []
 
-    def start_provider_attempt(self, *, context, provider, attempt_number):
+    def start_provider_attempt(self, *, context, provider, attempt_number, profile=None, model=None):
         self.started.append((context, provider, attempt_number))
         return len(self.started)
 

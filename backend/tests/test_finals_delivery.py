@@ -23,7 +23,7 @@ def test_export_contains_council_challenge_calibration_labels_and_outcomes(tmp_p
         client.post(url + '/review', json={'action': 'accepted'})
         client.post(url + '/outcomes', json={'checkpoint': 'day_30', 'actuals': [{'assumption_id': 'A1', 'actual_value': 12000}]})
         markdown = client.get(url + '/export.md').text
-        for expected in ('委员会分歧', 'opportunity', 'cfo', 'risk', '事前验尸', '新增风险数', 'O1', '采纳', '偏差警告', '不是预测', '回填对照', '12000', '-40'):
+        for expected in ('委员会分歧', 'opportunity', 'cfo', 'risk', 'expert', '个人长期发展专家', '按场景默认', '事前验尸', '新增风险数', 'O1', '采纳', '偏差警告', '不是预测', '回填对照', '12000', '-40'):
             assert expected in markdown
         assert '月售后工单量' not in markdown
         assert 'small_test_first' not in markdown  # translated recommendation
@@ -57,8 +57,8 @@ def test_ablation_uses_same_fake_provider_and_emits_blind_risk_rows(tmp_path):
     assert rows and set(rows[0]) == {'question_id', 'arm', 'risk_text', 'label'}
     assert {r['arm'] for r in rows} == {'A', 'B', 'C'}
     assert all(r['label'] == '' and r['question_id'] == 'Q1' for r in rows)
-    assert calls.count('ablation') == 2 and calls.count('analyzing') == 3
-    assert len(calls) == 9
+    assert calls.count('ablation') == 2 and calls.count('analyzing') == 4
+    assert len(calls) == 10
     assert summary['risk_counts']['A'] >= 1 and summary['risk_counts']['B'] >= 1
     assert '人工标注' in (tmp_path / 'summary.md').read_text()
 
@@ -85,9 +85,9 @@ def test_live_smoke_full_path_uses_mock_transport_and_reports_only_safe_metrics(
         message = json.loads(body['messages'][1]['content'])
         stage, context = message['stage'], message['context']
         context.setdefault('evidence', [])
-        context['outputs'] = {'researching': context.get('research', {}), 'challenging': context.get('challenge', {})}
+        context['outputs'] = {'planning': context.get('planning', {}), 'researching': context.get('research', {}), 'challenging': context.get('challenge', {})}
         if stage == 'analyzing':
-            context['_council_member'] = next(role for role in ('opportunity', 'cfo', 'risk') if f'本次独立席位 {role}' in body['messages'][0]['content'])
+            context['_council_member'] = next(role for role in ('opportunity', 'cfo', 'risk', 'expert') if f'本次独立席位 {role}' in body['messages'][0]['content'])
         return response(DemoModelProvider().generate(stage, context))
     def search_handler(request):
         body = json.loads(request.content)
@@ -100,9 +100,9 @@ def test_live_smoke_full_path_uses_mock_transport_and_reports_only_safe_metrics(
         model_provider='openai_compat', openai_compat_api_key='never-print-model', tavily_api_key='never-print-search'))
     assert result['passed'] and result['within_120_seconds']
     assert result['final_status'] == 'deferred'
-    assert result['provider_call_count'] == 9  # seven model calls and two search queries
-    assert len(result['provider_calls']) == 9
-    assert all(set(call) == {'logical_operation', 'status', 'error_code'} for call in result['provider_calls'])
+    assert result['provider_call_count'] == 10  # eight model calls and two search queries
+    assert len(result['provider_calls']) == 10
+    assert all(set(call) == {'logical_operation', 'status', 'error_code', 'profile', 'model'} for call in result['provider_calls'])
     assert all(call['status'] == 'succeeded' and call['error_code'] is None for call in result['provider_calls'])
     assert len(result['human_gates']) == 2
     assert all(stage in result['stages'] for stage in ('clarifying', 'planning', 'researching', 'analyzing', 'challenging', 'delivering'))

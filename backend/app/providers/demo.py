@@ -2,6 +2,7 @@
 from app.baseline import analyze_business_baseline
 from app.providers.contracts import COUNCIL_ROLES, council_disagreement, validate_stage_output
 from app.providers.base import ProviderCallContext
+from app.providers.council import selected_expert
 from app.schemas import BusinessBaseline, EvidenceCard
 
 
@@ -22,6 +23,8 @@ class DemoSearchProvider:
 
 
 class DemoModelProvider:
+    profile = 'demo'
+    model_label = 'Demo · 合成模型'
     def generate(
         self,
         stage: str,
@@ -65,10 +68,10 @@ class DemoModelProvider:
             role = context.get('_council_member')
             if role is None:
                 members = [self._generate(stage, dict(context, _council_member=member)) for member in COUNCIL_ROLES]
-                return {'summary': '演示委员会：三位独立委员意见分裂。', 'members': members, 'disagreement': council_disagreement(members)}
-            stances = {'opportunity': 'support', 'cfo': 'oppose', 'risk': 'conditional'}
-            headlines = {'opportunity': '值得验证目标收益', 'cfo': '当前证据不足以承诺预算', 'risk': '必须先明确停止条件'}
-            return {'role': role, 'stance': stances[role], 'headline': headlines[role],
+                return {'summary': '演示委员会：四位独立委员意见分裂。', 'members': members, 'disagreement': council_disagreement(members)}
+            stances = {'opportunity': 'support', 'cfo': 'oppose', 'risk': 'conditional', 'expert': 'oppose'}
+            headlines = {'opportunity': '值得验证目标收益', 'cfo': '当前证据不足以承诺预算', 'risk': '必须先明确停止条件', 'expert': '专业条件尚未核实，不宜直接投入'}
+            return {**({'expert_kind': selected_expert(context)} if role == 'expert' else {}), 'role': role, 'stance': stances[role], 'headline': headlines[role],
                     'reasoning': f'推断：在 {window}、预算 {budget} 元内验证「{goal}」。{baseline_note}',
                     'key_points': ['演示材料不构成真实收益证明。'],
                     'challenged_assumption_ids': [item['id'] for item in context.get('assumptions', []) if 'id' in item],

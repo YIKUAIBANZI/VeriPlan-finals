@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.providers.contracts import MODEL_STAGES
+from app.providers.council import EXPERT_INSTRUCTIONS, selected_expert
 
 
 _CONSTRAINT_FIELDS = ("question", "time_window", "budget_limit", "primary_goal")
@@ -116,6 +117,8 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
     instructions = _INSTRUCTIONS
     if repair_errors:
         instructions += "\n上次输出未通过校验。根据 repair_errors 的字段路径和规则修正，重新输出完整 JSON；不要复述错误，不得改写约束、引用或代码计算的数据。"
+    if stage == "planning":
+        instructions += "\n选择一个 expert_kind 白名单专家，并用不超过 80 字的 expert_reason 说明加派原因。"
     if stage == "ablation":
         instructions += "\n评估这个决定并列出所有风险，只返回 risks 列表；这是单模型单次评估。"
     if stage == "challenging":
@@ -125,6 +128,8 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
     if stage == "analyzing":
         member = member or context.get("_council_member")
         roles = {"opportunity": "机会官：评估增长机会和收益成立条件。", "cfo": "财务官：审查现金流、成本和机会成本。", "risk": "风险官：审查失败风险和不可逆后果。"}
+        kind = selected_expert(context)
+        roles["expert"] = f"专家 {kind}：{EXPERT_INSTRUCTIONS[kind]} expert_kind 必须为 {kind}。"
         if member is not None:
             if member not in roles:
                 raise ValueError("Unknown council member")
