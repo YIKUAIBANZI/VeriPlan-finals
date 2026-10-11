@@ -56,6 +56,8 @@ export function DecisionResult({
 
   return (
     <>
+      {/* Objections come before the verdict: the user sees what could go wrong first. */}
+      <ChallengePanel decision={decision} />
       {memo && (
         <section className="paper result-paper">
           <div className="section-heading">
@@ -123,7 +125,6 @@ export function DecisionResult({
           )}
         </section>
       )}
-      <ChallengePanel decision={decision} />
       {memo && (
         <section className="paper action-paper">
           <div className="section-heading">

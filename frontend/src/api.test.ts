@@ -43,7 +43,15 @@ it("uses the frozen endpoint paths and JSON envelopes", async () => {
   expect(fetch).toHaveBeenLastCalledWith("/api/decisions/a/outcomes", expect.objectContaining({ method: "POST", body: JSON.stringify(outcome) }));
   const past = { question: "过去是否应该投入这笔营销费用？", scenario: "marketing_spend" as const, decision_date: "2026-07-01", assumptions: [{ label: "收入", category: "revenue" as const, value: 20000, unit: "元", confidence: 70, actual_value: 12000 }], note: "回溯" };
   await api.createRetrospective(past);
-  expect(fetch).toHaveBeenLastCalledWith("/api/retrospectives", expect.objectContaining({ body: JSON.stringify(past) }));
+  const backendPast = {
+    question: past.question,
+    scenario: past.scenario,
+    decision_date: past.decision_date,
+    assumptions: [{ label: "收入", category: "revenue", value: 20000, unit: "元", confidence: 70 }],
+    actuals: [{ assumption_id: "A1", actual_value: 12000 }],
+    note: "回溯",
+  };
+  expect(fetch).toHaveBeenLastCalledWith("/api/retrospectives", expect.objectContaining({ body: JSON.stringify(backendPast) }));
   await api.getCalibration();
   expect(fetch).toHaveBeenLastCalledWith("/api/calibration", expect.objectContaining({ method: "GET", body: undefined }));
 });

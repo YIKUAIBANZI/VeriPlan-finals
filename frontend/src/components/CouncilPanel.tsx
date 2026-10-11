@@ -1,4 +1,5 @@
 import type { CouncilRole, Decision, Stance } from "../types";
+import { assumptionName } from "../assumptionName";
 const roles: Record<CouncilRole, string> = { opportunity: "机会官", cfo: "财务官", risk: "风险官" };
 const stances: Record<Stance, string> = { support: "支持", oppose: "反对", conditional: "有条件支持" };
 export function CouncilPanel({ decision }: { decision: Decision }) {
@@ -31,7 +32,7 @@ export function CouncilPanel({ decision }: { decision: Decision }) {
               <h4>{member.headline}</h4><p>{member.reasoning}</p>
               <ul>{member.key_points.map(point => <li key={point}>{point}</li>)}</ul>
               <p className="member-meta">委员信心 {member.confidence}%</p>
-              {!!member.challenged_assumption_ids.length && <p>质疑假设：{member.challenged_assumption_ids.join("、")}</p>}
+              {!!member.challenged_assumption_ids.length && <p>质疑假设：{member.challenged_assumption_ids.map(id => assumptionName(decision, id)).join("、")}</p>}
               <div className="citations">{member.evidence_ids.map(id => <a key={id} href={`#evidence-${id}`}>证据 {id}</a>)}</div>
             </div> : completed ? <p className="council-conclusion">{event.summary}</p> : <p className="seat-status">{state === "failed" ? "审查中断" : "思考中"}</p>}
           </div>

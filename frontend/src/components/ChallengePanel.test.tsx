@@ -22,6 +22,6 @@ it("keeps legacy objections readable without claiming new risk counts", () => {
 it("shows immutable historical warnings and the exact adjusted-reference disclaimer", () => {
   render(<ChallengePanel decision={splitDecision} />);
   expect(screen.getByText("你过去 3 次收入类预测平均高估 38.5%")).toBeVisible();
-  expect(screen.getByText(/A1 修正参考值：12,300/)).toBeVisible();
+  expect(screen.getByText(/A1 .*修正参考值：12,300/)).toBeVisible();
   expect(screen.getByText("按你历史偏差修正的参考值，不是预测")).toBeVisible();
 });

@@ -49,8 +49,19 @@ export const api = {
     request<Decision>(`/decisions/${encodeURIComponent(id)}/objection-labels`, { labels }),
   saveOutcomes: (id: string, input: OutcomeInput) =>
     request<Decision>(`/decisions/${encodeURIComponent(id)}/outcomes`, input),
+  // The server assigns A1…An in submission order and expects actuals separately.
   createRetrospective: (input: RetrospectiveInput) =>
-    request<Decision>("/retrospectives", input),
+    request<Decision>("/retrospectives", {
+      question: input.question,
+      scenario: input.scenario,
+      decision_date: input.decision_date,
+      assumptions: input.assumptions.map(({ actual_value: _actual, ...assumption }) => assumption),
+      actuals: input.assumptions.map((item, index) => ({
+        assumption_id: `A${index + 1}`,
+        actual_value: item.actual_value,
+      })),
+      note: input.note,
+    }),
   getCalibration: () => request<CalibrationProfile>("/calibration"),
   exportDecision: async (id: string) => {
     const response = await fetchResponse(
