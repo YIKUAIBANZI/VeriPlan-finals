@@ -144,3 +144,33 @@ questions.jsonl 每行示例：
 - Demo 全部是合成材料，种子只在空 Demo 校准历史中生成。画像不是预测；小样本不能证明真实改进。
 - 消融输出只提供风险条数与人工标注表，未做质量结论；B 额外研究/调用成本未控制。
 - 延续单进程 SQLite 运行边界；没有增加多用户鉴权或多进程协调。回溯记录无 Memo，因此现有 Markdown 导出端点仍返回 409。
+
+## Live 加固（2026-10-12，feat/live-hardening）
+
+本节取代上文“无效响应不重试”“确认字段逐字相等拒收”的旧行为。全部使用 Fake / MockTransport，未读取 key 文件、未发真实网络请求，未尝试提交。
+
+- **A：确认约束由服务端注入。** clarifying 的 question/time_window/budget_limit/primary_goal，以及 delivering 已有的 time_window/budget_limit/primary_goal，在 Pydantic 前覆盖，返回时再次写入服务端原值（避免字符串规范化改变旧记录）。缺失或类型错误也不能成为模型改写确认字段的渠道；输入 payload 不原地修改。delivering 契约原本没有 question，最终快照/导出的问题仍来自决策本身，未扩展 Memo schema。委员身份、引用、行动预算、blocker 条件、校准数字仍严格校验；不把模型生成的其他文本当作已确认值。
+- **B：每个 Live 模型操作最多一次修复。** DeepSeek 和 openai_compat 共用校验/修复流程；JSON（包含响应信封）解析、Pydantic、引用、业务契约和截断失败均可触发。第二次输入增加 repair_errors，只含受控字段路径和规则；不回传模型原文、Pydantic input/msg/ctx 或未知额外字段名，摘要最多 8 条。成功后才记 succeeded、落阶段产物；再次失败保留最后一次具体子码。委员会每席独立补一次，其他席位不重跑、不共享产物；任何席位最终失败仍不落委员会半成品。
+- **重试预算：** 正常输出错误为原调用 + 1 次 `:repair`；原调用保留已有最多 3 次传输/HTTP/兼容格式降级预算。修复严格只发 1 次 HTTP，不再嵌套传输重试，所以每操作物理请求上限 4 次。兼容通道已降级 json_object 时，修复沿用该格式，Schema 继续随 system 输入发送。认证、余额、审计错误等不触发模型修复。Demo 没有新增模型调用或自动修复。
+- **C：稳定子码。** 新失败使用 model_incomplete、model_invalid_json、model_contract_violation，原先 transport/auth 等分类保留。provider attempt 与 snapshot.failure.code 一致；incomplete_reason 仅允许 max_output_tokens/content_filter/unknown（Chat finish_reason=length 映射为 max_output_tokens）。账本新增可空列，旧 SQLite 迁移可重复执行；旧 model_invalid_response 记录保持原样。工作流对 Fake/自定义 provider 的契约失败也返回 model_contract_violation。
+- **前端兼容检查：** types.ts 的 failure.code 为 string；App.tsx 展示 failure.message，其余 failure 使用只涉及 stage。无需新枚举或文案映射，前端未改。
+- **D：控制截断。** 两个 provider 默认预算 8192；共用配置 DEEPSEEK_MAX_OUTPUT_TOKENS 范围 512–16384。prompt 要求 summary ≤120 字、reasoning ≤200 字、objection text ≤120 字、premortem ≤200 字及其他单条文本尽量 ≤120 字。未收紧已有 Pydantic 文本长度，Demo/旧契约仍兼容；文本简洁要求不替代完整引用和条件。
+- **E：smoke 可定位。** JSON 新增 provider_calls，逐次只输出 logical_operation/status/error_code，包含失败与 `:repair`；已有计数、阶段耗时、failure 和双人工闸门指标保留。截断原因可从 failure.incomplete_reason 查看，逐调用数组不扩展其他字段。
+
+### 旧测试语义变化
+
+1. test_stage_contracts 的 confirmed_constraint_rewrite：从“预算改写必须抛错”改为“预算必须被确认值覆盖”。test_finals_scenarios 的六种周期同理：模型写 999 天必须恢复真实周期。
+2. test_stage_contracts 的 planning 查询重复用例：从“契约暂允许、workflow 去重后拒绝”改为“契约先拒绝少于两条不同查询”。这样真实 provider 能在记成功前修复，仍由工作流规范化并限制最多三个搜索查询。
+3. test_deepseek_provider 的 invalid_responses、test_openai_compat 的 malformed_completion：从不重试、统一 model_invalid_response，改为一次修复、具体子码、两条闭合账本。空白文本属于 model_invalid_json；缺失/多段文本属于 model_contract_violation；未完成状态属于 model_incomplete。
+4. test_provider_boundaries 的非法/重复 planning 输出仍在搜索之前失败，Demo/Fake 不增加自动重试，只更新期待错误码为 model_contract_violation；显式人工重试恢复语义保留。
+5. test_live_configuration 与 DeepSeek 请求断言：默认 4096→8192，配置非法上界样例 8193→16385。
+6. test_finals_delivery 的完整 smoke：补充逐调用字段白名单及成功状态断言，原有授权、计数、耗时、人工闸门与凭据不泄漏断言保留。
+
+### 离线验证与交接
+
+- TDD：A 新用例先复现 6 个失败；B/C 首批 20 个参数用例先失败；D 默认预算 2 个用例先失败；E smoke 先因缺 provider_calls 失败，再实现。
+- 新增 test_live_hardening 覆盖约束改写/缺失/非法类型、快照与导出、两个 provider 的 JSON/Pydantic/引用/blocker/代码计数/查询错误、脱敏修复、两次失败上限、三席并发与独立修复、不落半成品、截断原因白名单与持久化、重复迁移、格式降级继承、修复传输失败不再重试，以及 challenging/delivering 修复成功/失败的完整 smoke。
+- 各项完成后均执行后端全量 pytest：A 298 passed；B 318 passed；C 334 passed；D/E 336 passed（随后追加整链路用例，最终结果见下）。测试 fixture 阻断真实 connect/connect_ex/DNS。前端未改，未运行条件要求之外的 Vitest。
+- 不宣称已提高真实 DeepSeek 跑通率或达到真实 ≤120 秒；集成人需用现有授权 smoke 复跑。修复与提高输出预算可能增加耗时，仍保留脚本的 120 秒判定。
+
+最终验收：`cd backend && .venv/bin/python -m pytest -q` → **344 passed in 6.85s**；`git diff --check` 无错误。分支核对为 `feat/live-hardening`。修改仅在 backend/、scripts/ 和本文件；未改前端，未执行 git commit。

@@ -36,8 +36,7 @@ def test_new_horizons_roundtrip_and_server_assumption_ids(tmp_path, days):
     output = DemoModelProvider().generate('clarifying', context)
     assert validate_stage_output('clarifying', output, context)['time_window'] == f'{days} 天'
     output['time_window'] = '999 天'
-    with pytest.raises(ValueError):
-        validate_stage_output('clarifying', output, context)
+    assert validate_stage_output('clarifying', output, context)['time_window'] == f'{days} 天'
 
 
 @pytest.mark.parametrize('update', [

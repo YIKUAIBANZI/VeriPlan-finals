@@ -140,7 +140,7 @@ class WorkflowEngine:
                         target = DecisionStatus(self._stages[self._stages.index(stage) + 1])
                     self._repository.complete_stage(decision_id, stage, output, target)
                 except ProviderError as error:
-                    self._repository.mark_failed(decision_id, stage, error.code)
+                    self._repository.mark_failed(decision_id, stage, error.code, incomplete_reason=error.incomplete_reason)
                     break
                 except Exception:
                     # Raw provider messages may contain credentials or user data.
@@ -316,11 +316,11 @@ class WorkflowEngine:
         except ProviderError:
             raise
         except (TypeError, ValueError) as error:
-            raise ProviderError('model_invalid_response') from error
+            raise ProviderError('model_contract_violation') from error
         if stage == 'planning':
             output['queries'] = _normalize_queries(output['queries'])
             if len(output['queries']) < 2:
-                raise ProviderError('model_invalid_response')
+                raise ProviderError('model_contract_violation')
         if stage == 'delivering':
             output['research_gaps'] = _stable_unique_text([
                 *snapshot.outputs['researching'].get('research_gaps', []),
@@ -359,7 +359,7 @@ class WorkflowEngine:
                         decision_id=snapshot.id, logical_operation=f'analyzing:{role}', stage='analyzing',
                     )), member_context)
             except (TypeError, ValueError) as error:
-                raise ProviderError('model_invalid_response') from error
+                raise ProviderError('model_contract_violation') from error
             self._repository.append_event(snapshot.id, stage=f'council:{role}', status='completed', summary=f"{role_labels[role]}：{stance_labels[opinion['stance']]}——{opinion['headline']}")
             return opinion
 

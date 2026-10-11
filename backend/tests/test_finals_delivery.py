@@ -101,6 +101,9 @@ def test_live_smoke_full_path_uses_mock_transport_and_reports_only_safe_metrics(
     assert result['passed'] and result['within_120_seconds']
     assert result['final_status'] == 'deferred'
     assert result['provider_call_count'] == 9  # seven model calls and two search queries
+    assert len(result['provider_calls']) == 9
+    assert all(set(call) == {'logical_operation', 'status', 'error_code'} for call in result['provider_calls'])
+    assert all(call['status'] == 'succeeded' and call['error_code'] is None for call in result['provider_calls'])
     assert len(result['human_gates']) == 2
     assert all(stage in result['stages'] for stage in ('clarifying', 'planning', 'researching', 'analyzing', 'challenging', 'delivering'))
     assert 'never-print' not in json.dumps(result)

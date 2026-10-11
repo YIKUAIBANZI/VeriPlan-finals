@@ -123,6 +123,7 @@ class ProviderCallRecord(Base):
     attempt_number: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16))
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    incomplete_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

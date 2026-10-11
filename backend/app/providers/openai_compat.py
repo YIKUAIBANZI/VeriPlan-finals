@@ -7,7 +7,8 @@ import httpx2
 from pydantic import SecretStr
 
 from app.providers.base import ProviderError
-from app.providers.contracts import stage_schema, validate_stage_output
+from app.providers.contracts import stage_schema
+from app.providers.output_validation import ModelOutputError, incomplete
 from app.providers.deepseek import DeepSeekModelProvider
 from app.providers.prompts import build_prompt
 
@@ -27,11 +28,11 @@ def validate_base_url(value: str) -> str:
 
 
 class OpenAICompatModelProvider(DeepSeekModelProvider):
-    # Reuse the existing redacted attempt recorder and status classification only.
+    # Share validation, one repair, and the redacted attempt recorder.
     _provider_name = 'openai_compat'
 
     def __init__(self, *, api_key: SecretStr, base_url: str, model: str,
-                 timeout_seconds: int = 30, max_output_tokens: int = 4096,
+                 timeout_seconds: int = 30, max_output_tokens: int = 8192,
                  transport=None, sleeper=time.sleep, recorder=None):
         self._url = validate_base_url(base_url) + '/chat/completions'
         if not api_key.get_secret_value().strip():
@@ -44,31 +45,28 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
             follow_redirects=False, trust_env=False,
             headers={'Authorization': f'Bearer {api_key.get_secret_value().strip()}', 'Content-Type': 'application/json'})
 
-    def generate(self, stage, context, *, call_context=None):
+    def _build_payload(self, stage, context, *, repair_errors=None):
         name, schema = stage_schema(stage, member=context.get('_council_member'))
-        system, prompt = build_prompt(stage, context)
-        # Schema remains in the system message when the server only supports JSON mode.
-        payload = dict(model=self._model, stream=False, max_tokens=self._max_output_tokens,
+        system, prompt = build_prompt(stage, context, repair_errors=repair_errors)
+        return dict(model=self._model, stream=False, max_tokens=self._max_output_tokens,
             messages=[{'role': 'system', 'content': system + '\nJSON Schema: ' + json.dumps(schema, ensure_ascii=False)},
                       {'role': 'user', 'content': prompt}],
             response_format={'type': 'json_schema', 'json_schema': {'name': name, 'schema': schema}})
-        body, call_id = self._request(payload, call_context=call_context)
-        try:
-            choices = body['choices']
-            if not isinstance(choices, list) or len(choices) != 1 or choices[0]['finish_reason'] != 'stop':
-                raise ValueError('incomplete completion')
-            message = choices[0]['message']
-            if message.get('refusal') or message.get('tool_calls') or message.get('role') != 'assistant':
-                raise ValueError('unsupported completion')
-            decoded = json.loads(message['content'])
-            if not isinstance(decoded, dict):
-                raise ValueError('output must be an object')
-            result = validate_stage_output(stage, decoded, context)
-        except (KeyError, IndexError, TypeError, ValueError):
-            self._finish_attempt(call_id, status='failed', error_code='model_invalid_response')
-            raise ProviderError('model_invalid_response') from None
-        self._finish_attempt(call_id, status='succeeded')
-        return result
+
+    @staticmethod
+    def _extract_output_text(body):
+        choices = body.get('choices')
+        if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+            raise ModelOutputError('model_contract_violation', ['response.choices: exactly one required'])
+        choice = choices[0]
+        if choice.get('finish_reason') != 'stop':
+            raise incomplete({'length': 'max_output_tokens', 'content_filter': 'content_filter'}.get(
+                choice.get('finish_reason') if isinstance(choice.get('finish_reason'), str) else ''))
+        message = choice.get('message')
+        if (not isinstance(message, dict) or message.get('refusal') or message.get('tool_calls')
+                or message.get('role') != 'assistant' or not isinstance(message.get('content'), str)):
+            raise ModelOutputError('model_contract_violation', ['response.message: assistant text required'])
+        return message['content']
 
     @staticmethod
     def _schema_unsupported(response):
@@ -82,9 +80,9 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
         except (ValueError, AttributeError):
             return False
 
-    def _request(self, payload, *, call_context):
-        fallback = False
-        for attempt in range(3):
+    def _request(self, payload, *, call_context, max_attempts=3):
+        fallback = payload.get('response_format') == {'type': 'json_object'}
+        for attempt in range(max_attempts):
             call_id = self._start_attempt(call_context, attempt + 1)
             code, retryable = None, False
             try:
@@ -96,25 +94,27 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
             else:
                 if not fallback and self._schema_unsupported(response):
                     self._finish_attempt(call_id, status='failed', error_code='model_schema_unsupported')
-                    if attempt == 2:
+                    if attempt == max_attempts - 1:
                         raise ProviderError('model_schema_unsupported')
                     fallback = True
-                    payload = payload | {'response_format': {'type': 'json_object'}}
+                    payload['response_format'] = {'type': 'json_object'}
                     continue
                 code = 'model_auth_failed' if response.status_code == 403 else self._http_error_code(response.status_code)
                 retryable = response.status_code in {429, 500, 502, 503, 504}
                 if code is None:
                     try:
                         body = response.json()
-                        if not isinstance(body, dict):
-                            raise ValueError('invalid envelope')
                     except ValueError:
-                        code = 'model_invalid_response'
+                        code = 'model_invalid_json'
                     else:
-                        return body, call_id
+                        if isinstance(body, dict):
+                            return body, call_id
+                        code = 'model_contract_violation'
             self._finish_attempt(call_id, status='failed', error_code=code)
-            if retryable and attempt < 2:
+            if retryable and attempt < max_attempts - 1:
                 self._sleeper((0.25, 0.75)[attempt])
                 continue
+            if code in {'model_invalid_json', 'model_contract_violation'}:
+                raise ModelOutputError(code, ['response: invalid json' if code == 'model_invalid_json' else 'response: object required']) from None
             raise ProviderError(code) from None
         raise ProviderError('model_upstream_error')
