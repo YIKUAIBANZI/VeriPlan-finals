@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None,
-                 search_provider=None, mode='demo', authorized=False, settings=None) -> dict:
+                 search_provider=None, mode='demo', authorized=False, settings=None, b_only=False) -> dict:
     if mode not in {'demo', 'live'} or (mode == 'live' and not authorized):
         raise ValueError('Live ablation requires explicit authorization')
     sys.path.insert(0, str(ROOT / 'backend'))
@@ -39,7 +39,7 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
     output_dir = Path(output_dir)
     if any((output_dir / name).exists() for name in ('risks.csv', 'summary.md')):
         raise ValueError('Output already exists')
-    rows, counts = [], {'A': 0, 'B': 0, 'C': 0, 'D': 0}
+    rows, counts = [], ({'B': 0} if b_only else {'A': 0, 'B': 0, 'C': 0, 'D': 0})
     with tempfile.TemporaryDirectory(prefix='veriplan-ablation-') as temporary, ExitStack() as stack:
         if mode == 'demo':
             def blocked(*args, **kwargs):
@@ -61,18 +61,19 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
             repo = DecisionRepository(database)
             stack.callback(repo._engine.dispose)
             model = model_provider or DemoModelProvider()
-            engine = WorkflowEngine(repo, model_provider=model, search_provider=search_provider or DemoSearchProvider(), mode=mode)
+            engine = WorkflowEngine(repo, model_provider=model, search_provider=search_provider or DemoSearchProvider(), mode=mode, settings=settings)
         failed: list[str] = []
         for question_id, payload in zip(ids, payloads):
-            # A question only counts when both arms finish, so the arms stay comparable.
+            # A question only counts when every requested arm finishes.
             question_rows: list[dict] = []
             try:
                 # Both arms use the very same model instance and original input constraints.
                 decision = repo.create(payload, mode=mode)
                 context = decision.model_dump(mode='json')
-                single = validate_stage_output('ablation', model.generate('ablation', context,
-                    call_context=ProviderCallContext(decision.id, 'ablation:A', stage='ablation')), context)
-                question_rows += [dict(question_id=question_id, arm='A', risk_text=risk, label='') for risk in single['risks']]
+                if not b_only:
+                    single = validate_stage_output('ablation', model.generate('ablation', context,
+                        call_context=ProviderCallContext(decision.id, 'ablation:A', stage='ablation')), context)
+                    question_rows += [dict(question_id=question_id, arm='A', risk_text=risk, label='') for risk in single['risks']]
                 if engine.run(decision.id).status.value != 'awaiting_confirmation':
                     raise RuntimeError('Arm B clarification failed')
                 engine.confirm_clarification(decision.id)
@@ -82,16 +83,17 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
                 engine.apply_review(decision.id, action='deferred', note='Ablation only; no business execution.')
                 question_rows += [dict(question_id=question_id, arm='B', risk_text=item['text'], label='')
                                   for item in result.outputs['challenging']['objections']]
-                # Arm C isolates the council structure from retrieval: one call, same evidence as B.
-                evidence_context = {**context, 'evidence': [card.model_dump(mode='json') for card in result.evidence]}
-                informed = validate_stage_output('ablation', model.generate('ablation', evidence_context,
-                    call_context=ProviderCallContext(decision.id, 'ablation:C', stage='ablation')), evidence_context)
-                question_rows += [dict(question_id=question_id, arm='C', risk_text=risk, label='') for risk in informed['risks']]
-                # Arm D isolates prompt engineering: same evidence and the skeptic's instructions, still one call.
-                prompted_context = {**evidence_context, '_ablation_variant': 'skeptic_prompt'}
-                prompted = validate_stage_output('ablation', model.generate('ablation', prompted_context,
-                    call_context=ProviderCallContext(decision.id, 'ablation:D', stage='ablation')), prompted_context)
-                question_rows += [dict(question_id=question_id, arm='D', risk_text=risk, label='') for risk in prompted['risks']]
+                if not b_only:
+                    # Arm C isolates the council structure from retrieval: one call, same evidence as B.
+                    evidence_context = {**context, 'evidence': [card.model_dump(mode='json') for card in result.evidence]}
+                    informed = validate_stage_output('ablation', model.generate('ablation', evidence_context,
+                        call_context=ProviderCallContext(decision.id, 'ablation:C', stage='ablation')), evidence_context)
+                    question_rows += [dict(question_id=question_id, arm='C', risk_text=risk, label='') for risk in informed['risks']]
+                    # Arm D isolates prompt engineering: same evidence and the skeptic's instructions, still one call.
+                    prompted_context = {**evidence_context, '_ablation_variant': 'skeptic_prompt'}
+                    prompted = validate_stage_output('ablation', model.generate('ablation', prompted_context,
+                        call_context=ProviderCallContext(decision.id, 'ablation:D', stage='ablation')), prompted_context)
+                    question_rows += [dict(question_id=question_id, arm='D', risk_text=risk, label='') for risk in prompted['risks']]
             except Exception:
                 if mode == 'demo':
                     raise
@@ -106,11 +108,20 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
         writer.writeheader()
         writer.writerows(rows)
     completed = len(questions) - len(failed)
-    lines = ['# 风险对照实验', '', f'模式：{mode}；问题数：{len(questions)}；两组均完成：{completed}',
+    lines = [] if b_only else ['# 风险对照实验', '', f'模式：{mode}；问题数：{len(questions)}；两组均完成：{completed}',
              f"未完成（已排除，不计入两组）：{'、'.join(failed) if failed else '无'}", '',
              '| 组别 | 风险条数 |', '|---|---:|', f"| A 单模型单次调用 | {counts['A']} |", f"| B 完整委员会工作流 | {counts['B']} |", f"| C 单模型单次调用 + B 的同一份证据 | {counts['C']} |", f"| D 同 C + 反方的详细提示词 | {counts['D']} |", '',
              'label 留空供人工标注；条数不等于风险质量，也不证明委员会更优。',
              'B 包含额外研究和多次调用，当前对照未控制上下文和调用成本；Demo 是合成输出。', '']
+    if b_only:
+        switches = settings.model_dump(include={'skeptic_input', 'skeptic_review_pass', 'research_rounds',
+            'deepseek_reasoning_effort', 'reasoning_effort_stages'})
+        lines = ['# 风险实验：仅 B 臂', '', f'模式：{mode}；问题数：{len(questions)}；仅 B 臂完成：{completed}',
+                 f"未完成（已排除）：{'、'.join(failed) if failed else '无'}", '',
+                 '深度配置：' + json.dumps(switches, ensure_ascii=False, sort_keys=True), '',
+                 '| 组别 | 风险条数 |', '|---|---:|', f"| B 完整委员会工作流 | {counts['B']} |", '',
+                 'label 留空供人工标注；条数不等于风险质量，也不证明委员会更优。',
+                 '仅运行 B，不构成臂间对照；开关可能增加调用成本，Demo 是合成输出。', '']
     (output_dir / 'summary.md').write_text('\n'.join(lines), encoding='utf-8')
     return dict(mode=mode, question_count=len(questions), risk_counts=counts, failed=failed)
 
@@ -120,13 +131,14 @@ def main():
     parser.add_argument('--input', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--live', action='store_true')
+    parser.add_argument('--b-only', action='store_true', help='Run only arm B with current depth settings')
     parser.add_argument('--i-authorize-live', action='store_true')
     args = parser.parse_args()
     if args.live and not args.i_authorize_live:
         parser.error('--live requires --i-authorize-live')
     try:
         questions = [json.loads(line) for line in args.input.read_text(encoding='utf-8').splitlines() if line.strip()]
-        result = run_ablation(questions, output_dir=args.output_dir, mode='live' if args.live else 'demo', authorized=args.i_authorize_live)
+        result = run_ablation(questions, output_dir=args.output_dir, mode='live' if args.live else 'demo', authorized=args.i_authorize_live, b_only=args.b_only)
     except Exception:
         print('Ablation failed; check input, output path and provider configuration. No private error details are printed.', file=sys.stderr)
         return 1

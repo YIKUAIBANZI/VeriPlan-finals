@@ -4,6 +4,7 @@ from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Literal
+from app.config import Settings
 
 from app.providers.base import (
     ModelProvider,
@@ -84,12 +85,14 @@ class WorkflowEngine:
         *,
         mode: Literal["demo", "live"] = "demo",
         council_providers: dict[str, ModelProvider] | None = None,
+        settings: Settings | None = None,
     ):
         self._repository = repository
         self._model = model_provider or DemoModelProvider()
         self._search = search_provider or DemoSearchProvider()
         self._mode = mode
         self._council_providers = council_providers or {}
+        self._settings = settings or Settings()
         self._lock = Lock()
         self._active: set[str] = set()
 
@@ -200,98 +203,17 @@ class WorkflowEngine:
 
     def _run_stage(self, stage: str, snapshot: DecisionSnapshot) -> dict:
         if stage == 'researching':
-            queries = self._repository.sync_research_queries(
-                snapshot.id,
-                snapshot.outputs['planning']['queries'],
-            )
-            persisted = self._repository.get(snapshot.id).evidence
-            seen_urls: set[str] = set()
-            seen_content: set[tuple[str, str]] = set()
-            for existing in persisted:
-                url_identity, content_identity = _evidence_identity(existing)
-                seen_urls.add(url_identity)
-                seen_content.add(content_identity)
-            query_gaps: list[str] = []
-            for query in queries:
-                if query.status is ResearchQueryStatus.succeeded:
-                    if query.evidence_count == 0:
-                        query_gaps.append(
-                            f'查询「{query.query}」未返回可用来源。'
-                        )
-                    continue
-                self._repository.start_research_query(
-                    snapshot.id,
-                    query.id,
-                )
-                call_context = ProviderCallContext(
-                    decision_id=snapshot.id,
-                    logical_operation='researching',
-                    stage='researching',
-                    research_query_id=query.id,
-                )
-                try:
-                    cards = self._search.search(
-                        query.query,
-                        call_context=call_context,
-                    )
-                except ProviderError as error:
-                    self._repository.fail_research_query(
-                        snapshot.id,
-                        query.id,
-                        code=error.code,
-                    )
-                    query_gaps.append(
-                        f'查询「{query.query}」未完成（{error.code}）。'
-                    )
-                    continue
-                inserted = 0
-                for card in cards:
-                    canonical_url, content_identity = _evidence_identity(card)
-                    if canonical_url in seen_urls or content_identity in seen_content:
-                        continue
-                    if canonical_url != card.source_url:
-                        card = card.model_copy(update={'source_url': canonical_url})
-                    evidence_id = self._repository.save_evidence(
-                        snapshot.id,
-                        card,
-                        research_query_id=query.id,
-                    )
-                    inserted += int(evidence_id is not None)
-                    seen_urls.add(canonical_url)
-                    seen_content.add(content_identity)
-                self._repository.complete_research_query(
-                    snapshot.id,
-                    query.id,
-                    evidence_count=inserted,
-                )
-                if inserted == 0:
-                    query_gaps.append(
-                        f'查询「{query.query}」未返回新增的安全来源。'
-                    )
-            cards = self._repository.get(snapshot.id).evidence
-            if snapshot.mode == 'live' and not cards:
-                raise ProviderError('research_no_safe_evidence')
-            gaps = list(query_gaps)
-            if cards and all(card.is_demo for card in cards):
-                gaps.append('只有合成演示材料，没有经过核实的现实证据。')
-            if not cards:
-                gaps.append('未检索到可用来源。')
-            if not cards or (len(cards) == 1 and cards[0].reliability == 'low'):
-                gaps.append('缺少足量可信来源。')
-            if any(not card.is_demo for card in cards):
-                summary = '联网搜索返回的来源摘要已保存，内容仍需人工核验。'
-            elif cards:
-                summary = '演示研究：合成材料已去重；没有执行真实搜索。'
-            else:
-                summary = '研究未检索到可用来源；没有生成证据。'
-            return {
-                'summary': summary,
-                'queries': [item.query for item in queries],
-                'evidence_ids': [card.id for card in cards],
-                'research_gaps': _stable_unique_text(gaps),
-            }
+            return self._run_researching(snapshot)
         context = snapshot.model_dump(mode='json')
         if stage == 'challenging':
+            if self._settings.skeptic_input == 'independent':
+                context = {key: context[key] for key in (
+                    'question', 'time_window', 'budget_limit', 'primary_goal', 'scenario',
+                    'horizon_days', 'known_risks', 'assumptions', 'business_baseline',
+                    'baseline_analysis', 'evidence',
+                )}
+                context['outputs'] = {'researching': deepcopy(snapshot.outputs['researching'])}
+                context['_skeptic_input'] = 'independent'
             if snapshot.mode == 'demo':
                 from app.providers.demo import ensure_demo_calibration_seeds
                 with self._lock:
@@ -321,6 +243,8 @@ class WorkflowEngine:
             raise
         except (TypeError, ValueError) as error:
             raise ProviderError('model_contract_violation') from error
+        if stage == 'challenging' and self._settings.skeptic_review_pass:
+            output = self._review_challenge(snapshot, context, output)
         if stage == 'planning':
             output['queries'] = _normalize_queries(output['queries'])
             if len(output['queries']) < 2:
@@ -341,6 +265,145 @@ class WorkflowEngine:
                         + '支持度按规则上限调整为 59。'
                     )
         return output
+
+    def _run_researching(self, snapshot):
+        initial = snapshot.outputs['planning']['queries']
+        if self._settings.research_rounds == 1:
+            return self._research_round(snapshot, initial)
+        followup = snapshot.outputs.get('planning:followup')
+        if followup is not None:
+            return self._research_round(snapshot, [*initial, *followup['queries']])
+        first = self._research_round(snapshot, initial, allow_empty=True)
+        context = self._repository.get(snapshot.id).model_dump(mode='json')
+        context['outputs'] = {'planning': snapshot.outputs['planning'], 'researching': first}
+        context['_research_followup'] = True
+        operation = 'planning:followup'
+        self._repository.append_event(snapshot.id, stage=operation, status='started', summary='根据首轮证据与缺口规划补充查询。')
+        try:
+            followup = validate_stage_output('planning', self._model.generate(
+                'planning', deepcopy(context), call_context=ProviderCallContext(
+                    snapshot.id, operation, stage='researching')), context)
+        except (TypeError, ValueError) as error:
+            raise ProviderError('model_contract_violation') from error
+        # Save the accepted plan before any second-round search; retries reuse it.
+        self._repository.save_stage_output(snapshot.id, operation, followup)
+        self._repository.append_event(snapshot.id, stage=operation, status='completed', summary='补充查询已保存。')
+        return self._research_round(snapshot, [*initial, *followup['queries']], skip_queries=initial)
+
+    def _research_round(self, snapshot, query_texts, *, allow_empty=False, skip_queries=()):
+        queries = self._repository.sync_research_queries(
+            snapshot.id,
+            query_texts,
+            max_queries=5 if self._settings.research_rounds == 2 else 3,
+        )
+        persisted = self._repository.get(snapshot.id).evidence
+        seen_urls: set[str] = set()
+        seen_content: set[tuple[str, str]] = set()
+        for existing in persisted:
+            url_identity, content_identity = _evidence_identity(existing)
+            seen_urls.add(url_identity)
+            seen_content.add(content_identity)
+        query_gaps: list[str] = []
+        for query in queries:
+            if query.status is ResearchQueryStatus.succeeded:
+                if query.evidence_count == 0:
+                    query_gaps.append(
+                        f'查询「{query.query}」未返回可用来源。'
+                    )
+                continue
+            if query.query in skip_queries:
+                query_gaps.append(f'查询「{query.query}」未完成（{query.last_error_code}）。')
+                continue
+            self._repository.start_research_query(
+                snapshot.id,
+                query.id,
+            )
+            call_context = ProviderCallContext(
+                decision_id=snapshot.id,
+                logical_operation='researching',
+                stage='researching',
+                research_query_id=query.id,
+            )
+            try:
+                cards = self._search.search(
+                    query.query,
+                    call_context=call_context,
+                )
+            except ProviderError as error:
+                self._repository.fail_research_query(
+                    snapshot.id,
+                    query.id,
+                    code=error.code,
+                )
+                query_gaps.append(
+                    f'查询「{query.query}」未完成（{error.code}）。'
+                )
+                continue
+            inserted = 0
+            for card in cards:
+                canonical_url, content_identity = _evidence_identity(card)
+                if canonical_url in seen_urls or content_identity in seen_content:
+                    continue
+                if canonical_url != card.source_url:
+                    card = card.model_copy(update={'source_url': canonical_url})
+                evidence_id = self._repository.save_evidence(
+                    snapshot.id,
+                    card,
+                    research_query_id=query.id,
+                )
+                inserted += int(evidence_id is not None)
+                seen_urls.add(canonical_url)
+                seen_content.add(content_identity)
+            self._repository.complete_research_query(
+                snapshot.id,
+                query.id,
+                evidence_count=inserted,
+            )
+            if inserted == 0:
+                query_gaps.append(
+                    f'查询「{query.query}」未返回新增的安全来源。'
+                )
+        cards = self._repository.get(snapshot.id).evidence
+        if snapshot.mode == 'live' and not cards and not allow_empty:
+            raise ProviderError('research_no_safe_evidence')
+        gaps = list(query_gaps)
+        if cards and all(card.is_demo for card in cards):
+            gaps.append('只有合成演示材料，没有经过核实的现实证据。')
+        if not cards:
+            gaps.append('未检索到可用来源。')
+        if not cards or (len(cards) == 1 and cards[0].reliability == 'low'):
+            gaps.append('缺少足量可信来源。')
+        if any(not card.is_demo for card in cards):
+            summary = '联网搜索返回的来源摘要已保存，内容仍需人工核验。'
+        elif cards:
+            summary = '演示研究：合成材料已去重；没有执行真实搜索。'
+        else:
+            summary = '研究未检索到可用来源；没有生成证据。'
+        return {
+            'summary': summary,
+            'queries': [item.query for item in queries],
+            'evidence_ids': [card.id for card in cards],
+            'research_gaps': _stable_unique_text(gaps),
+        }
+
+    def _review_challenge(self, snapshot, context, draft):
+        operation = 'challenging:review'
+        review_context = deepcopy(context)
+        review_context['_challenge_draft'] = deepcopy(draft)
+        self._repository.append_event(snapshot.id, stage=operation, status='started', summary='反方开始逐条自审。')
+        try:
+            reviewed = validate_stage_output('challenging', self._model.generate(
+                'challenging', deepcopy(review_context), call_context=ProviderCallContext(
+                    snapshot.id, operation, stage='challenging')), review_context)
+        except Exception as error:
+            # Review quality/transport failures may fall back, but an unavailable
+            # audit ledger must still stop execution. Never persist raw errors.
+            if isinstance(error, ProviderError) and error.code == 'provider_audit_failed':
+                raise
+            self._repository.append_event(snapshot.id, stage=operation, status='failed', summary='反方自审未通过，保留已校验首稿。')
+            return draft
+        self._repository.append_event(snapshot.id, stage=operation, status='completed', summary='反方自审通过，采用审查稿。')
+        return reviewed
 
     def _run_council(self, snapshot: DecisionSnapshot, context: dict) -> dict:
         # Freeze one common input before any worker starts. Each receives its own copy.

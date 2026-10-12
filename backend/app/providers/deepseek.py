@@ -29,6 +29,8 @@ class DeepSeekModelProvider:
         model: str = "deepseek-v4-flash",
         timeout_seconds: int = 30,
         max_output_tokens: int = 8192,
+        reasoning_effort: str = 'low',
+        reasoning_effort_stages: Mapping[str, str] | None = None,
         transport: httpx2.BaseTransport | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         recorder: AttemptRecorder | None = None,
@@ -38,6 +40,8 @@ class DeepSeekModelProvider:
             raise ValueError("DeepSeek API key must not be empty")
         self._model = model
         self._max_output_tokens = max_output_tokens
+        self._reasoning_effort = reasoning_effort
+        self._reasoning_effort_stages = dict(reasoning_effort_stages or {})
         self._sleeper = sleeper
         self._recorder = recorder
         self._client = httpx2.Client(
@@ -58,7 +62,7 @@ class DeepSeekModelProvider:
         *,
         call_context: ProviderCallContext | None = None,
     ) -> dict[str, Any]:
-        _, schema = stage_schema(stage, member=context.get("_council_member"))
+        _, schema = stage_schema(stage, member=context.get("_council_member"), followup=bool(context.get("_research_followup")))
         repair_errors = None
         payload = {}
         single_attempt = bool(call_context and call_context.single_attempt)
@@ -87,11 +91,11 @@ class DeepSeekModelProvider:
             return result
 
     def _build_payload(self, stage, context, *, repair_errors=None):
-        schema_name, schema = stage_schema(stage, member=context.get("_council_member"))
+        schema_name, schema = stage_schema(stage, member=context.get("_council_member"), followup=bool(context.get("_research_followup")))
         instructions, prompt_input = build_prompt(stage, context, repair_errors=repair_errors)
         return {
             "model": self._model, "instructions": instructions, "input": prompt_input,
-            "reasoning": {"effort": "low"}, "max_output_tokens": self._max_output_tokens,
+            "reasoning": {"effort": self._reasoning_effort_stages.get(stage, self._reasoning_effort)}, "max_output_tokens": self._max_output_tokens,
             "stream": False,
             "text": {"format": {"type": "json_schema", "name": schema_name, "schema": schema}},
         }

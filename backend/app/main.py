@@ -62,6 +62,8 @@ def create_app(
         else:
             constructed_model = DeepSeekModelProvider(
                 api_key=model_key, model=settings.deepseek_model,
+                reasoning_effort=settings.deepseek_reasoning_effort,
+                reasoning_effort_stages=settings.reasoning_effort_stages,
                 timeout_seconds=settings.deepseek_timeout_seconds,
                 max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository,
             )
@@ -79,7 +81,9 @@ def create_app(
                                timeout_seconds=settings.deepseek_timeout_seconds,
                                max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository)
                 if profile == 'deepseek':
-                    cache[identity] = DeepSeekModelProvider(**options)
+                    cache[identity] = DeepSeekModelProvider(**options,
+                        reasoning_effort=settings.deepseek_reasoning_effort,
+                        reasoning_effort_stages=settings.reasoning_effort_stages)
                 elif profile == 'anthropic':
                     cache[identity] = AnthropicModelProvider(**options, effort=settings.anthropic_effort)
                 else:
@@ -107,6 +111,7 @@ def create_app(
         search_provider=constructed_search if live_available else None,
         mode=settings.app_mode,
         council_providers=council_providers if live_available else None,
+        settings=settings,
     )
 
     @asynccontextmanager

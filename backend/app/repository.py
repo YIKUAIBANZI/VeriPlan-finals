@@ -162,9 +162,11 @@ class DecisionRepository:
         self,
         decision_id: str,
         queries: list[str],
+        *,
+        max_queries: int = 3,
     ) -> list[ResearchQuery]:
-        if len(queries) > 3 or len(set(queries)) != len(queries):
-            raise ValueError("Research queries must be unique and limited to three")
+        if max_queries not in (3, 5) or len(queries) > max_queries or len(set(queries)) != len(queries):
+            raise ValueError("Research queries must be unique and within the query limit")
         with self._sessions.begin() as session:
             decision = self._require(session, decision_id)
             existing = list(
@@ -175,9 +177,11 @@ class DecisionRepository:
                 )
             )
             if existing:
-                if [item.query for item in existing] != queries:
+                old_queries = [item.query for item in existing]
+                if old_queries == queries:
+                    return [self._research_query(item) for item in existing]
+                if max_queries != 5 or queries[:len(existing)] != old_queries:
                     raise ValueError("Research queries are already initialized")
-                return [self._research_query(item) for item in existing]
             now = datetime.now(UTC)
             records = [
                 ResearchQueryRecord(
@@ -192,11 +196,11 @@ class DecisionRepository:
                     started_at=None,
                     finished_at=None,
                 )
-                for ordinal, query in enumerate(queries)
+                for ordinal, query in enumerate(queries[len(existing):], start=len(existing))
             ]
             session.add_all(records)
             session.flush()
-            return [self._research_query(item) for item in records]
+            return [self._research_query(item) for item in [*existing, *records]]
 
     def start_research_query(
         self,
