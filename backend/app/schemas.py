@@ -41,7 +41,7 @@ class ResearchQueryStatus(str, Enum):
 
 class ResearchQuery(StrictModel):
     id: int
-    ordinal: int = Field(ge=0, le=2)
+    ordinal: int = Field(ge=0, le=4)
     query: str = Field(min_length=1, max_length=400)
     status: ResearchQueryStatus
     attempt_count: int = Field(ge=0)

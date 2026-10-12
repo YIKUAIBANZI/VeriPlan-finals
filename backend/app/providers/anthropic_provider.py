@@ -37,7 +37,7 @@ class AnthropicModelProvider(DeepSeekModelProvider):
         self._schema_supported = True
 
     def _build_payload(self, stage, context, *, repair_errors=None):
-        _, schema = stage_schema(stage, member=context.get('_council_member'))
+        _, schema = stage_schema(stage, member=context.get('_council_member'), followup=bool(context.get('_research_followup')))
         system, prompt = build_prompt(stage, context, repair_errors=repair_errors)
         output_config = {'effort': self._effort}
         if self._schema_supported:

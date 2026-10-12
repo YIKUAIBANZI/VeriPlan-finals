@@ -8,6 +8,8 @@ from app.providers.search_safety import normalize_domains
 
 
 DomainTuple = Annotated[tuple[str, ...], NoDecode]
+ReasoningEffort = Literal['low', 'medium', 'high']
+ReasoningStage = Literal['clarifying', 'planning', 'analyzing', 'challenging', 'delivering', 'ablation']
 
 
 class Settings(BaseSettings):
@@ -20,6 +22,9 @@ class Settings(BaseSettings):
     openai_compat_api_key: SecretStr | None = None
     openai_compat_model: str = Field(default='deepseek-v4.1-flash', min_length=1)
     council_model_map: str = ''
+    skeptic_input: Literal['council', 'independent'] = 'council'
+    skeptic_review_pass: bool = False
+    research_rounds: int = Field(default=1, ge=1, le=2)
     bailian_api_key: SecretStr | None = None
     minimax_api_key: SecretStr | None = None
     kimi_api_key: SecretStr | None = None
@@ -29,12 +34,29 @@ class Settings(BaseSettings):
     anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] = 'medium'
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = 'deepseek-v4-flash'
+    deepseek_reasoning_effort: ReasoningEffort = 'low'
+    reasoning_effort_stages: Annotated[dict[ReasoningStage, ReasoningEffort], NoDecode] = Field(default_factory=dict)
     deepseek_timeout_seconds: int = Field(default=30, ge=1, le=120)
     deepseek_max_output_tokens: int = Field(default=8192, ge=512, le=16384)
     tavily_api_key: SecretStr | None = None
     tavily_timeout_seconds: int = Field(default=15, ge=1, le=30)
     tavily_trusted_domains: DomainTuple = ()
     tavily_blocked_domains: DomainTuple = ()
+
+    @field_validator('reasoning_effort_stages', mode='before')
+    @classmethod
+    def parse_reasoning_stages(cls, value):
+        if not isinstance(value, str):
+            return value
+        if not value.strip():
+            return {}
+        result = {}
+        for entry in value.split(','):
+            parts = [part.strip() for part in entry.split(':')]
+            if len(parts) != 2 or not all(parts) or parts[0] in result:
+                raise ValueError('Invalid or duplicate REASONING_EFFORT_STAGES entry')
+            result[parts[0]] = parts[1]
+        return result
 
     @field_validator(
         "tavily_trusted_domains",

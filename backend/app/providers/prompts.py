@@ -91,15 +91,25 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
         # Ablation arm C: a single call sees the same evidence the council saw.
         selected["evidence"] = _evidence(context)
     elif stage == "planning":
-        selected["clarification"] = _output(context, "clarifying")
+        if context.get('_research_followup'):
+            selected['evidence'] = _evidence(context)
+            selected['research_gaps'] = (_output(context, 'researching') or {}).get('research_gaps', [])
+            selected['existing_queries'] = (_output(context, 'planning') or {}).get('queries', [])
+        else:
+            selected["clarification"] = _output(context, "clarifying")
     elif stage == "analyzing":
         selected["planning"] = _output(context, "planning")
         selected["research"] = _output(context, "researching")
         selected["evidence"] = _evidence(context)
     elif stage == "challenging":
-        selected["analysis"] = _output(context, "analyzing")
+        if context.get('_skeptic_input') == 'independent':
+            selected['research'] = _output(context, 'researching')
+        else:
+            selected["analysis"] = _output(context, "analyzing")
         selected["calibration_warnings"] = context.get("calibration_warnings", [])
         selected["evidence"] = _evidence(context)
+        if '_challenge_draft' in context:
+            selected['challenge_draft'] = context['_challenge_draft']
     elif stage == "delivering":
         selected["research"] = _output(context, "researching")
         selected["analysis"] = _output(context, "analyzing")
@@ -118,7 +128,10 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
     if repair_errors:
         instructions += "\n上次输出未通过校验。根据 repair_errors 的字段路径和规则修正，重新输出完整 JSON；不要复述错误，不得改写约束、引用或代码计算的数据。"
     if stage == "planning":
-        instructions += "\n选择一个 expert_kind 白名单专家，并用不超过 80 字的 expert_reason 说明加派原因。"
+        if context.get('_research_followup'):
+            instructions += "\n根据约束、假设、已有证据摘要与 research_gaps，提出 1–2 条补充查询；不得重复 existing_queries，每条至多 400 字。只输出 queries。"
+        else:
+            instructions += "\n选择一个 expert_kind 白名单专家，并用不超过 80 字的 expert_reason 说明加派原因。"
     if stage == "ablation" and context.get("_ablation_variant") == "skeptic_prompt":
         # Arm D: the skeptic's own instructions and limits, minus the council's input.
         instructions += ("\n做事前验尸：假设这个决定在窗口期结束时已经失败，倒推最可能的原因。"
@@ -128,6 +141,10 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
         instructions += "\n评估这个决定并列出所有风险，只返回 risks 列表；这是单模型单次评估。"
     if stage == "challenging":
         instructions += "\n做事前验尸，逐条关联现有假设或已知风险；每个历史偏差警告的全部 assumption_ids 必须由至少一条意见覆盖。calibration_warnings 是代码计算的不可改写数据，无需在输出中重复。"
+        if '_challenge_draft' in context:
+            instructions += ("\n逐条审查 challenge_draft：没有挂到假设 ID 或证据、或没有可核验条件的意见，改写或删除；"
+                             "补充遗漏的阻断性风险；仍最多 6 条。输出同一 schema 的完整审查稿，保留偏差警告覆盖，"
+                             "不要输出代码字段 novel_objection_count 和 calibration_warnings。")
     if stage == "delivering":
         instructions += "\n有 blocker 时不得推荐 go，conditions 必须逐条覆盖所有 blocker 的 objection_id。"
     if stage == "analyzing":

@@ -13,6 +13,12 @@ class DemoSearchProvider:
         *,
         call_context: ProviderCallContext | None = None,
     ) -> list[EvidenceCard]:
+        if query.startswith('veriplan followup '):
+            topic = 'cost' if 'cost' in query else 'risk'
+            return [EvidenceCard(title=f'模拟：补充核验 {topic}',
+                summary=f'合成补充材料 {topic}：需采集真实对照数据并核验停止条件。',
+                source_url=f'https://demo.invalid/followup-{topic}',
+                stance='context', reliability='low', is_demo=True)]
         fixtures = [
             ('模拟：输入基线', '模拟内部记录：数字假设需核对来源，尚未验证真实收益。', 'baseline', 'context'),
             ('模拟：人工升级流程', '模拟流程文档：扩大投入和重大承诺需要人工确认。', 'handoff', 'supports'),
@@ -63,6 +69,8 @@ class DemoModelProvider:
         if stage == 'clarifying':
             return {'summary': '演示澄清：请确认目标和约束后再继续。', 'question': context['question'], 'time_window': window, 'budget_limit': budget, 'primary_goal': goal, 'assumptions': [f'当前演示{subject}，尚无真实业务结果。', '所有来源材料均为合成示例，尚无真实业务数据。', baseline_note], 'questions': ['你是否确认上述目标、预算、时间约束，并同意先评估受限试点？']}
         if stage == 'planning':
+            if context.get('_research_followup'):
+                return {'queries': ['veriplan followup cost validation', 'veriplan followup risk verification']}
             return {'summary': '演示研究计划：分别检查业务基线与失败风险。', 'queries': [f'{subject} baseline cost {goal} {window} budget {budget}', f'{subject} risk failure counterevidence {goal}'], 'research_questions': ['真实业务基线是否支持受限试点？', '哪些失败风险会改变试点建议？']}
         if stage == 'analyzing':
             role = context.get('_council_member')

@@ -235,3 +235,57 @@ COUNCIL_MODEL_MAP=opportunity=bailian:qwen3.8-flash,cfo=deepseek,risk=minimax:Mi
 最终 pytest **429 passed**；Vitest **71 passed / 14 files**；`npm run build` 成功。`git diff --check` 无错误。指定 `backend/.venv/bin/python scripts/verify_demo.py --output /tmp/vd.json --force` 退出码 0：四席含 expert=oppose、is_split=true；customer 专家、理由“按场景默认”；blocker=1、新风险=1、偏差警告=1；A1 回填误差 -40%；两道人工闸门；provider_calls=[]、真实请求 0。
 
 限制：没有真实供应商联调，模型可用性、请求参数在线兼容性、成功率、费用及 ≤120 秒目标仍待集成人授权验证。前端完成 Vitest、类型/生产构建与响应式样式检查，未执行浏览器截图或投影/真机验收。Demo 和 fixtures 均是合成数据；模型标签只是示例或配置身份，不能作为真实多模型效果证据。仍沿用单进程 SQLite 边界；所有改动未提交。
+
+## 开发包 D（2026-10-12，feat/depth）
+
+按 D1 → D2 → D3 → D4 → 消融脚本顺序 TDD 实施。修改仅在 backend/、scripts/ 和本文件；未读取 key 文件，未发真实网络请求，未对当前仓库执行 git add/commit/push。现有测试文件及断言语义未改，新增离线用例集中在 `backend/tests/test_depth.py`。本 worktree 没有 mmr.md，交接记录按本任务白名单保存在这里。
+
+### 开关与行为
+
+| 配置 | 默认 | 启用效果 |
+|---|---|---|
+| SKEPTIC_INPUT | council | independent 只给反方约束、假设、已知风险、研究、证据、代码基线及 calibration_warnings；过滤委员会、事件、Memo 等产物 |
+| DEEPSEEK_REASONING_EFFORT | low | low / medium / high，传入 DeepSeek Responses 的 reasoning.effort |
+| REASONING_EFFORT_STAGES | 空 | 如 challenging:high,delivering:high；未列阶段使用全局值，重复/未知阶段或非法 effort 拒绝 |
+| SKEPTIC_REVIEW_PASS | false | 校验首稿后追加 challenging:review；通过则替换，输出/传输失败保留首稿并记录事件 |
+| RESEARCH_ROUNDS | 1 | 2 时首轮仍最多 3 条，再调用 planning:followup 生成 1–2 条补充查询，总上限 5 |
+
+- **D1：** 独立模式同时在 workflow 的 provider 输入和 prompt 白名单隔离委员会产物；delivering 仍读取委员会与最终反方稿。默认 council 的 prompt 内容和阶段顺序保持不变，四位委员仍并行且互不可见。
+- **D2：** 应用默认 DeepSeek 与映射到 DeepSeek 的席位均接入配置；重试、修复沿用所属模型阶段的 effort。审查及其修复使用 challenging 覆盖，补充规划使用 planning 覆盖。此配置只作用于 DeepSeek Responses，其他适配器参数保持原状。
+- **D3：** 审查输入为首稿与原上下文的独立深复制；指令要求逐条补足假设/证据关联与可核验条件、补充阻断风险、最多 6 条。复用完整 schema、引用、偏差警告覆盖和代码字段防伪校验；最终稿重新计算 novel_objection_count，并注入可信 calibration_warnings。Live 适配器沿用至多一次脱敏修复，操作名为 challenging:review:repair；Fake/Demo 不另加自动修复。开始、成功、失败事件使用固定文案，不保存异常原文。交付继续覆盖最终稿全部 blocker。
+- **D4：** 采用只有 queries 的小契约（1–2 条、每条 ≤400 字、规范化后互异且不重复首轮），三个模型适配器均使用该 schema 与既有修复机制。输入仅含约束/假设、白名单证据摘要、研究缺口和已有查询。通过校验的补充计划先写 `outputs['planning:followup']`，再扩展持久化查询；已有查询及 ID 不重写。重启后复用补充计划，跳过成功查询，仅显式重试失败/中断查询。恢复同一任务应保留 RESEARCH_ROUNDS=2。
+- 第二轮沿用 URL 规范化及标题/摘要去重、证据所属查询、搜索安全与缺口规则；不会在同一次阶段执行内再次请求首轮失败查询。Live 首轮无证据时允许第二轮补救，两轮后仍无证据则继续报 research_no_safe_evidence；失败查询的缺口不会被抹去，支持度封顶仍有效。Demo 补充两条确定性查询和明确标记的 demo.invalid 合成证据。
+- **消融：** `--b-only` 仅调用 B，仍经过两道人为闸门并停在 deferred；返回计数、CSV 与 summary 只包含 B。B 读取当前进程开关（也支持 Python 入口显式 Settings），summary 记录白名单深度配置。默认不传此参数仍运行 A/B/C/D；Demo 禁网、Live 的双授权及 key 门禁不变。
+
+### 偏离+原因
+
+1. D1 按规格明确允许的简化方案，只隔离输入，未让反方与委员会并行。这样不增加状态机分支、跨阶段半成品或恢复规则；因此不宣称本包缩短总耗时。
+2. D3 的“审查失败保留首稿”与原有“审计失败立即终止”在 provider_audit_failed 时冲突。保留安全优先级：该错误中止阶段，不能通过首稿回退绕过账本；普通审查失败仍按规格回退。
+3. D4 首轮最多 3 条、补充最多 2 条，未把首轮扩大到 5 条，否则无法同时满足追加检索与总上限。查询响应 ordinal 从 0–2 扩为 0–4 以读取第二轮记录；默认仓库写入上限仍为 3，仅显式两轮路径允许追加至 5，无数据库结构迁移。
+4. D4 补充查询拒绝与首轮重复，沿用现有 planning 对不同查询的纪律，避免付费执行无新增内容的补充规划；模型可用原有一次修复纠正。
+
+### TDD 与验证
+
+| 包 | 新用例先失败 | 包完成时全量 pytest |
+|---|---:|---:|
+| 基线 | — | 435 passed |
+| D1 | 3（默认模式对照原本通过） | 439 passed |
+| D2 | 9 | 448 passed |
+| D3 | 9 | 457 passed |
+| D4 | 5（随后补充恢复/空证据边界） | 472 passed |
+| --b-only | 3 | 475 passed |
+
+最终 `cd backend && .venv/bin/python -m pytest -q`：**475 passed in 9.64s**。覆盖默认行为回归、独立输入与交付双输入、全局/分阶段 effort（含映射席位和修复）、审查成功/修复/回退/警告覆盖/审计失败、五查询上限、跨轮 URL 与内容去重、两处中断后的恢复、空首轮补救与最终无证据失败、三个适配器的补充契约，以及全部开关的 B-only 离线整链路和 CLI 授权边界。所有 provider I/O 均为 Fake / MockTransport，测试 fixture 阻断 connect/connect_ex/DNS。
+
+离线使用示例（questions.jsonl 格式沿用上文，输出目录须未存在同名产物）：
+
+```bash
+SKEPTIC_INPUT=independent SKEPTIC_REVIEW_PASS=true RESEARCH_ROUNDS=2 \
+  DEEPSEEK_REASONING_EFFORT=low REASONING_EFFORT_STAGES=challenging:high,delivering:high \
+  backend/.venv/bin/python scripts/ablation.py --b-only \
+  --input /path/questions.jsonl --output-dir /tmp/ablation-depth
+```
+
+本轮未开展真实消融，不能由离线通过推断质量、耗时或成本改善。正常 B 为 8 次模型操作；同时开启审查和第二轮时为 10 次，另有最多 5 条搜索查询，传输重试/修复预算沿用原规则。
+
+指定 `backend/.venv/bin/python scripts/verify_demo.py --output /tmp/vd.json --force` 已通过（退出码 0）：默认 3 条合成证据、四席分歧、两道人为确认/审批闸门、blocker=1、新风险=1、偏差警告=1、13 个校准样本；provider_calls=[]、真实请求 0。验证报告在 `/tmp/vd.json`。最终 `git diff --check` 无错误，修改范围符合白名单。

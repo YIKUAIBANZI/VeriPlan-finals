@@ -52,7 +52,7 @@ class OpenAICompatModelProvider(DeepSeekModelProvider):
             headers={'Authorization': f'Bearer {api_key.get_secret_value().strip()}', 'Content-Type': 'application/json'})
 
     def _build_payload(self, stage, context, *, repair_errors=None):
-        name, schema = stage_schema(stage, member=context.get('_council_member'))
+        name, schema = stage_schema(stage, member=context.get('_council_member'), followup=bool(context.get('_research_followup')))
         system, prompt = build_prompt(stage, context, repair_errors=repair_errors)
         payload = dict(model=self._model, stream=False, max_tokens=self._max_output_tokens,
             messages=[{'role': 'system', 'content': system + '\nJSON Schema: ' + json.dumps(schema, ensure_ascii=False)},

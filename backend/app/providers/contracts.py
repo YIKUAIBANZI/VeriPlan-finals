@@ -49,6 +49,10 @@ class PlanningOutput(StrictModel):
     research_questions: list[TrimmedText] = Field(min_length=1, max_length=10)
 
 
+class FollowupPlanningOutput(StrictModel):
+    queries: list[QueryText] = Field(min_length=1, max_length=2)
+
+
 COUNCIL_ROLES = ("opportunity", "cfo", "risk", "expert")
 
 
@@ -175,7 +179,9 @@ def _require_model(stage: str):
         raise ValueError(f"Unsupported model stage: {stage}") from error
 
 
-def stage_schema(stage: str, *, member: str | None = None) -> tuple[str, dict[str, Any]]:
+def stage_schema(stage: str, *, member: str | None = None, followup: bool = False) -> tuple[str, dict[str, Any]]:
+    if stage == 'planning' and followup:
+        return 'veriplan_planning_followup', FollowupPlanningOutput.model_json_schema()
     model = MemberOpinion if stage == "analyzing" and member in COUNCIL_ROLES else _require_model(stage)
     return f"veriplan_{stage}", model.model_json_schema()
 
@@ -246,6 +252,15 @@ def validate_stage_output(
 ) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise ContractViolation("$", "object required", "model output must be an object")
+    if stage == 'planning' and context.get('_research_followup'):
+        result = FollowupPlanningOutput.model_validate(payload)
+        queries = [' '.join(query.split()) for query in result.queries]
+        identities = {query.casefold() for query in queries}
+        existing = {' '.join(query.split()).casefold() for query in
+                    context.get('outputs', {}).get('planning', {}).get('queries', [])}
+        if len(identities) != len(queries) or identities & existing:
+            raise ContractViolation('queries', 'requires distinct new queries', 'followup queries must be distinct and new')
+        return {'queries': queries}
     # Confirmed input belongs to the server; model wording is never authoritative.
     payload = dict(payload) | _confirmed_constraints(stage, context)
     computed = {}
