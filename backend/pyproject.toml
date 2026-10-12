@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Traceable decision workflow backend for VeriPlan"
 requires-python = ">=3.12"
 dependencies = [
+  "anthropic>=1,<2",
   "fastapi>=0.115,<1",
   "httpx2>=2.12,<3",
   "pydantic-settings>=2.7,<3",

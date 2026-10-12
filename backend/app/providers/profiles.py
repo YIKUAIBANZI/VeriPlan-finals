@@ -10,8 +10,9 @@ PROFILE_URLS = {
     # 并行智算云 (Paratera), the track sponsor's model platform.
     'paratera': 'https://llmapi.paratera.com/v1',
 }
-PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.6', 'paratera': 'Qwen3.8-Flash'}
-PROFILES = ('deepseek', *PROFILE_URLS)
+PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.6', 'paratera': 'Qwen3.8-Flash', 'anthropic': 'claude-sonnet-5-5'}
+# 'anthropic' uses the official SDK, so it has no OpenAI-compatible URL.
+PROFILES = ('deepseek', 'anthropic', *PROFILE_URLS)
 
 
 def parse_council_model_map(value: str) -> dict[str, tuple[str, str | None]]:
@@ -38,6 +39,8 @@ def model_label(profile: str, model: str) -> str:
         return 'MiniMax ' + model.removeprefix('MiniMax-')
     if profile == 'kimi':
         return 'Kimi ' + model
+    if profile == 'anthropic':
+        return 'Claude ' + model.removeprefix('claude-')
     if profile == 'paratera':
         return '并行智算云 ' + model
     return f'{profile} {model}'

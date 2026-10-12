@@ -7,6 +7,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
 from app.config import Settings
 from app.providers.base import ModelProvider, SearchProvider
 from app.providers.deepseek import DeepSeekModelProvider
+from app.providers.anthropic_provider import AnthropicModelProvider
 from app.providers.openai_compat import OpenAICompatModelProvider
 from app.providers.profiles import parse_council_model_map, PROFILE_MODELS, PROFILE_URLS
 from app.providers.tavily import TavilySearchProvider
@@ -29,7 +30,10 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     repository = DecisionRepository(database_path if database_path is not None else settings.database_url)
-    model_key = settings.deepseek_api_key if settings.model_provider == 'deepseek' else settings.openai_compat_api_key
+    model_key = {'deepseek': settings.deepseek_api_key, 'anthropic': settings.anthropic_api_key}.get(
+        settings.model_provider, settings.openai_compat_api_key)
+    default_model = {'deepseek': settings.deepseek_model, 'anthropic': settings.anthropic_model}.get(
+        settings.model_provider, settings.openai_compat_model)
     council_map = parse_council_model_map(settings.council_model_map)
     missing_profiles = {profile for profile, _ in council_map.values()
                         if not _has_secret(getattr(settings, profile + '_api_key'))}
@@ -43,7 +47,13 @@ def create_app(
     constructed_search = search_provider
     council_providers = {}
     if live_requested and live_model_configured and constructed_model is None:
-        if settings.model_provider == 'openai_compat':
+        if settings.model_provider == 'anthropic':
+            constructed_model = AnthropicModelProvider(
+                api_key=model_key, model=settings.anthropic_model, effort=settings.anthropic_effort,
+                timeout_seconds=settings.deepseek_timeout_seconds,
+                max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository,
+            )
+        elif settings.model_provider == 'openai_compat':
             constructed_model = OpenAICompatModelProvider(
                 api_key=model_key, base_url=settings.openai_compat_base_url,
                 model=settings.openai_compat_model, timeout_seconds=settings.deepseek_timeout_seconds,
@@ -58,8 +68,9 @@ def create_app(
     if live_requested and live_model_configured:
         cache = {}
         for role, (profile, override) in council_map.items():
-            model = override or (settings.deepseek_model if profile == 'deepseek' else PROFILE_MODELS[profile])
-            if profile == settings.model_provider and model == settings.deepseek_model:
+            model = override or {'deepseek': settings.deepseek_model,
+                                 'anthropic': settings.anthropic_model}.get(profile) or PROFILE_MODELS[profile]
+            if profile == settings.model_provider and model == default_model:
                 council_providers[role] = constructed_model
                 continue
             identity = (profile, model)
@@ -67,8 +78,12 @@ def create_app(
                 options = dict(api_key=getattr(settings, profile + '_api_key'), model=model,
                                timeout_seconds=settings.deepseek_timeout_seconds,
                                max_output_tokens=settings.deepseek_max_output_tokens, recorder=repository)
-                cache[identity] = (DeepSeekModelProvider(**options) if profile == 'deepseek' else
-                                   OpenAICompatModelProvider(**options, base_url=PROFILE_URLS[profile], profile=profile))
+                if profile == 'deepseek':
+                    cache[identity] = DeepSeekModelProvider(**options)
+                elif profile == 'anthropic':
+                    cache[identity] = AnthropicModelProvider(**options, effort=settings.anthropic_effort)
+                else:
+                    cache[identity] = OpenAICompatModelProvider(**options, base_url=PROFILE_URLS[profile], profile=profile)
             council_providers[role] = cache[identity]
     if live_requested and live_search_configured and constructed_search is None:
         constructed_search = TavilySearchProvider(
