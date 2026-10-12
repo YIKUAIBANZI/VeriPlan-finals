@@ -7,8 +7,10 @@ PROFILE_URLS = {
     'bailian': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     'minimax': 'https://api.minimaxi.com/v1',
     'kimi': 'https://api.moonshot.cn/v1',
+    # 并行智算云 (Paratera), the track sponsor's model platform.
+    'paratera': 'https://llmapi.paratera.com/v1',
 }
-PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.6'}
+PROFILE_MODELS = {'bailian': 'qwen3.8-flash', 'minimax': 'MiniMax-M2.5-highspeed', 'kimi': 'kimi-k2.6', 'paratera': 'Qwen3.8-Flash'}
 PROFILES = ('deepseek', *PROFILE_URLS)
 
 
@@ -36,4 +38,6 @@ def model_label(profile: str, model: str) -> str:
         return 'MiniMax ' + model.removeprefix('MiniMax-')
     if profile == 'kimi':
         return 'Kimi ' + model
+    if profile == 'paratera':
+        return '并行智算云 ' + model
     return f'{profile} {model}'

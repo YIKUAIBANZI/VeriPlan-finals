@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bailian_api_key: SecretStr | None = None
     minimax_api_key: SecretStr | None = None
     kimi_api_key: SecretStr | None = None
+    paratera_api_key: SecretStr | None = None
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = 'deepseek-v4-flash'
     deepseek_timeout_seconds: int = Field(default=30, ge=1, le=120)

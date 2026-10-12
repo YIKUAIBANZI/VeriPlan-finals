@@ -39,7 +39,7 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
     output_dir = Path(output_dir)
     if any((output_dir / name).exists() for name in ('risks.csv', 'summary.md')):
         raise ValueError('Output already exists')
-    rows, counts = [], {'A': 0, 'B': 0, 'C': 0}
+    rows, counts = [], {'A': 0, 'B': 0, 'C': 0, 'D': 0}
     with tempfile.TemporaryDirectory(prefix='veriplan-ablation-') as temporary, ExitStack() as stack:
         if mode == 'demo':
             def blocked(*args, **kwargs):
@@ -87,6 +87,11 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
                 informed = validate_stage_output('ablation', model.generate('ablation', evidence_context,
                     call_context=ProviderCallContext(decision.id, 'ablation:C', stage='ablation')), evidence_context)
                 question_rows += [dict(question_id=question_id, arm='C', risk_text=risk, label='') for risk in informed['risks']]
+                # Arm D isolates prompt engineering: same evidence and the skeptic's instructions, still one call.
+                prompted_context = {**evidence_context, '_ablation_variant': 'skeptic_prompt'}
+                prompted = validate_stage_output('ablation', model.generate('ablation', prompted_context,
+                    call_context=ProviderCallContext(decision.id, 'ablation:D', stage='ablation')), prompted_context)
+                question_rows += [dict(question_id=question_id, arm='D', risk_text=risk, label='') for risk in prompted['risks']]
             except Exception:
                 if mode == 'demo':
                     raise
@@ -103,7 +108,7 @@ def run_ablation(questions: list[dict], *, output_dir: Path, model_provider=None
     completed = len(questions) - len(failed)
     lines = ['# 风险对照实验', '', f'模式：{mode}；问题数：{len(questions)}；两组均完成：{completed}',
              f"未完成（已排除，不计入两组）：{'、'.join(failed) if failed else '无'}", '',
-             '| 组别 | 风险条数 |', '|---|---:|', f"| A 单模型单次调用 | {counts['A']} |", f"| B 完整委员会工作流 | {counts['B']} |", f"| C 单模型单次调用 + B 的同一份证据 | {counts['C']} |", '',
+             '| 组别 | 风险条数 |', '|---|---:|', f"| A 单模型单次调用 | {counts['A']} |", f"| B 完整委员会工作流 | {counts['B']} |", f"| C 单模型单次调用 + B 的同一份证据 | {counts['C']} |", f"| D 同 C + 反方的详细提示词 | {counts['D']} |", '',
              'label 留空供人工标注；条数不等于风险质量，也不证明委员会更优。',
              'B 包含额外研究和多次调用，当前对照未控制上下文和调用成本；Demo 是合成输出。', '']
     (output_dir / 'summary.md').write_text('\n'.join(lines), encoding='utf-8')

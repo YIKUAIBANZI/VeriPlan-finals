@@ -119,7 +119,12 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
         instructions += "\n上次输出未通过校验。根据 repair_errors 的字段路径和规则修正，重新输出完整 JSON；不要复述错误，不得改写约束、引用或代码计算的数据。"
     if stage == "planning":
         instructions += "\n选择一个 expert_kind 白名单专家，并用不超过 80 字的 expert_reason 说明加派原因。"
-    if stage == "ablation":
+    if stage == "ablation" and context.get("_ablation_variant") == "skeptic_prompt":
+        # Arm D: the skeptic's own instructions and limits, minus the council's input.
+        instructions += ("\n做事前验尸：假设这个决定在窗口期结束时已经失败，倒推最可能的原因。"
+                         "最多 6 条风险，每条 ≤ 120 字；每条必须关联现有假设 ID（如 A1）或用户已知风险，"
+                         "有证据时引用证据编号；优先给出会阻断决定的风险，并写出可核验的条件。只返回 risks 列表。")
+    elif stage == "ablation":
         instructions += "\n评估这个决定并列出所有风险，只返回 risks 列表；这是单模型单次评估。"
     if stage == "challenging":
         instructions += "\n做事前验尸，逐条关联现有假设或已知风险；每个历史偏差警告的全部 assumption_ids 必须由至少一条意见覆盖。calibration_warnings 是代码计算的不可改写数据，无需在输出中重复。"

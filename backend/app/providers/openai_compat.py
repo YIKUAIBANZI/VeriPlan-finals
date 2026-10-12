@@ -17,7 +17,7 @@ from app.providers.prompts import build_prompt
 def validate_base_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
-        valid = (parsed.scheme == 'https' and parsed.hostname in {'dashscope.aliyuncs.com', 'api.deepseek.com', 'api.minimaxi.com', 'api.moonshot.cn'}
+        valid = (parsed.scheme == 'https' and parsed.hostname in {'dashscope.aliyuncs.com', 'api.deepseek.com', 'api.minimaxi.com', 'api.moonshot.cn', 'llmapi.paratera.com'}
                  and parsed.port in {None, 443} and parsed.username is None and parsed.password is None
                  and not parsed.query and not parsed.fragment and not any(ord(c) < 33 for c in value)
                  and '\\' not in value)

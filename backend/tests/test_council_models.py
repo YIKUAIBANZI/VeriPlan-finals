@@ -201,8 +201,8 @@ def test_live_ablation_reuses_map_while_single_arms_use_default(tmp_path, monkey
         settings=live_settings(council_model_map='expert=kimi:kimi-k2.5'), search_provider=DemoSearchProvider())
     assert result['failed'] == []
     assert seen.count(('compat', 'analyzing', 'expert')) == 1
-    assert seen.count(('deepseek', 'ablation', None)) == 2
-    assert len(seen) == 10
+    assert seen.count(('deepseek', 'ablation', None)) == 3
+    assert len(seen) == 11
 
 
 def test_demo_ignores_live_map_and_creates_no_real_adapters(tmp_path, monkeypatch):
@@ -297,3 +297,11 @@ def test_live_model_selected_expert_survives_planning_and_four_seat_validation(t
         assert result['status'] == 'awaiting_review'
         assert result['outputs']['planning']['expert_source'] == 'model'
         assert expert_seen == ['legal_compliance']
+
+
+def test_paratera_profile_is_allowlisted_and_labelled():
+    from app.providers.profiles import PROFILE_URLS, model_label, parse_council_model_map
+
+    assert PROFILE_URLS['paratera'] == 'https://llmapi.paratera.com/v1'
+    assert parse_council_model_map('expert=paratera:GLM-5.3-Flash') == {'expert': ('paratera', 'GLM-5.3-Flash')}
+    assert model_label('paratera', 'GLM-5.3-Flash') == '并行智算云 GLM-5.3-Flash'

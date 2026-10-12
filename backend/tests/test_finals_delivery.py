@@ -55,10 +55,10 @@ def test_ablation_uses_same_fake_provider_and_emits_blind_risk_rows(tmp_path):
         output_dir=tmp_path, model_provider=Fake(), search_provider=DemoSearchProvider())
     rows = list(csv.DictReader((tmp_path / 'risks.csv').open()))
     assert rows and set(rows[0]) == {'question_id', 'arm', 'risk_text', 'label'}
-    assert {r['arm'] for r in rows} == {'A', 'B', 'C'}
+    assert {r['arm'] for r in rows} == {'A', 'B', 'C', 'D'}
     assert all(r['label'] == '' and r['question_id'] == 'Q1' for r in rows)
-    assert calls.count('ablation') == 2 and calls.count('analyzing') == 4
-    assert len(calls) == 10
+    assert calls.count('ablation') == 3 and calls.count('analyzing') == 4
+    assert len(calls) == 11
     assert summary['risk_counts']['A'] >= 1 and summary['risk_counts']['B'] >= 1
     assert '人工标注' in (tmp_path / 'summary.md').read_text()
 
