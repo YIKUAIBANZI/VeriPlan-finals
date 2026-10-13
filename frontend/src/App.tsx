@@ -15,6 +15,7 @@ import { ChallengePanel } from "./components/ChallengePanel";
 import { DecisionForm } from "./components/DecisionForm";
 import { WorkflowTimeline, EventLog } from "./components/WorkflowTimeline";
 import { EvidencePanel } from "./components/EvidencePanel";
+import { EvidenceNumbers, evidenceNumbers } from "./components/Cite";
 import { DecisionResult } from "./components/DecisionResult";
 import { Ledger } from "./components/Ledger";
 import { ResearchQueries } from "./components/ResearchQueries";
@@ -290,6 +291,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                   </button>
                 </section>
               )}
+              <EvidenceNumbers.Provider value={evidenceNumbers(decision.evidence)}>
               <div className="workspace-grid">
                 <div className="work-content">
                   {decision.status === "awaiting_confirmation" && (
@@ -412,6 +414,7 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                 </div>
                 {decision.status !== "retrospective" && <EvidencePanel evidence={decision.evidence} />}
               </div>
+              </EvidenceNumbers.Provider>
             </>
           )}
           <footer className="page-footer">

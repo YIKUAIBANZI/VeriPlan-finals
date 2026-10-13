@@ -43,7 +43,7 @@ export function EvidencePanel({ evidence }: { evidence: Evidence[] }) {
     acc[item.stance] = (acc[item.stance] ?? 0) + 1;
     return acc;
   }, {});
-  const visible = evidence.map((item, index) => ({ item, key: keyOf(item, index) }))
+  const visible = evidence.map((item, index) => ({ item, key: keyOf(item, index), number: index + 1 }))
     .filter(({ item }) => filter === "all" || item.stance === filter);
 
   function toggle(key: string) {
@@ -83,7 +83,7 @@ export function EvidencePanel({ evidence }: { evidence: Evidence[] }) {
       )}
       {evidence.length ? (
         <div className="evidence-list">
-          {visible.map(({ item, key }) => {
+          {visible.map(({ item, key, number }) => {
             const expanded = open.has(key);
             return (
               <article
@@ -95,7 +95,7 @@ export function EvidencePanel({ evidence }: { evidence: Evidence[] }) {
                 data-flash={flash === key || undefined}
               >
                 <button type="button" className="evidence-row" aria-expanded={expanded} onClick={() => toggle(key)}>
-                  <span className="evidence-id">#{key}</span>
+                  <span className="evidence-id">#{number}</span>
                   <span className="evidence-title">
                     <h3>{item.title}</h3>
                     <small>

@@ -9,6 +9,7 @@ from typing import Any
 import httpx2
 from pydantic import SecretStr
 
+from app.evidence_refs import EvidenceReferences
 from app.providers.base import AttemptRecorder, ProviderCallContext, ProviderError
 from app.providers.contracts import stage_schema, validate_stage_output
 from app.providers.prompts import build_prompt
@@ -63,6 +64,7 @@ class DeepSeekModelProvider:
         call_context: ProviderCallContext | None = None,
     ) -> dict[str, Any]:
         _, schema = stage_schema(stage, member=context.get("_council_member"), followup=bool(context.get("_research_followup")))
+        references = EvidenceReferences(card["id"] for card in context.get("evidence", []))
         repair_errors = None
         payload = {}
         single_attempt = bool(call_context and call_context.single_attempt)
@@ -76,7 +78,8 @@ class DeepSeekModelProvider:
             call_id = None
             try:
                 body, call_id = self._request(payload, call_context=operation, max_attempts=1 if repair or single_attempt else 3)
-                result = validate_stage_output(stage, json.loads(self._extract_output_text(body)), context)
+                output = references.to_global(json.loads(self._extract_output_text(body)))
+                result = validate_stage_output(stage, output, context)
             except (ModelOutputError, ValueError, TypeError, KeyError, IndexError) as error:
                 failure = error if isinstance(error, ModelOutputError) else validation_failure(error, schema)
                 # _request closes attempts for envelope/transport failures itself.

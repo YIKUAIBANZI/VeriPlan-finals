@@ -105,10 +105,11 @@ describe("EvidencePanel provenance labels", () => {
 });
 
 describe("EvidencePanel navigation", () => {
-  it("numbers cards by their real id so citations match, and starts collapsed", () => {
-    render(<EvidencePanel evidence={[{ ...liveEvidence, id: "13" }, { ...liveEvidence, id: "14", stance: "opposes" }]} />);
-    expect(screen.getByText("#13")).toBeVisible();
-    expect(screen.getByText("#14")).toBeVisible();
+  it("numbers cards from 1 within the decision, keeping the stored id as anchor, and starts collapsed", () => {
+    const { container } = render(<EvidencePanel evidence={[{ ...liveEvidence, id: "13" }, { ...liveEvidence, id: "14", stance: "opposes" }]} />);
+    expect(screen.getByText("#1")).toBeVisible();
+    expect(screen.getByText("#2")).toBeVisible();
+    expect(container.querySelector("#evidence-14")).not.toBeNull();
     expect(screen.getByText("2 条")).toBeVisible();
     expect(screen.getAllByText(liveEvidence.summary)[0]).not.toBeVisible();
   });
@@ -118,5 +119,17 @@ describe("EvidencePanel navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "反对 1" }));
     expect(screen.getByText("反对材料")).toBeVisible();
     expect(screen.queryByText("#1")).not.toBeInTheDocument();
+    expect(screen.getByText("#2")).toBeVisible();
+  });
+});
+
+describe("Cite numbering", () => {
+  it("shows the per-decision number for a stored id and falls back to the raw id", async () => {
+    const { Cite, EvidenceNumbers, evidenceNumbers } = await import("./Cite");
+    render(<EvidenceNumbers.Provider value={evidenceNumbers([{ ...liveEvidence, id: "25" }, { ...liveEvidence, id: "26" }])}>
+      <Cite id="26" /><Cite id="99" />
+    </EvidenceNumbers.Provider>);
+    expect(screen.getByRole("link", { name: "证据 2" })).toHaveAttribute("href", "#evidence-26");
+    expect(screen.getByRole("link", { name: "证据 99" })).toBeVisible();
   });
 });

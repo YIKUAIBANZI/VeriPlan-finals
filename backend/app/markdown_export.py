@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from app.evidence_refs import EvidenceReferences
 from app.schemas import DecisionSnapshot
 from app.providers.council import EXPERT_LABELS
 
@@ -89,6 +90,14 @@ def render_decision_markdown(snapshot: DecisionSnapshot) -> str:
 
     if snapshot.memo is None:
         raise ValueError("Decision report is not ready")
+
+    references = EvidenceReferences(card.id for card in snapshot.evidence)
+    # Render a local view; persisted snapshots and API responses retain global IDs.
+    snapshot = snapshot.model_copy(update={
+        "memo": references.to_local(snapshot.memo),
+        "outputs": references.to_local(snapshot.outputs),
+        "evidence": [card.model_copy(update={"id": references.local_id(card.id)}) for card in snapshot.evidence],
+    })
 
     mode_label = "Demo 模式（仅含合成演示材料）" if snapshot.mode == "demo" else "Live 模式（来源摘要仍需人工核验）"
     memo = snapshot.memo

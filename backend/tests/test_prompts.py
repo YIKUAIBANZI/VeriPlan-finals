@@ -122,4 +122,4 @@ def test_followup_planning_prioritizes_uncovered_dimensions_and_research_gaps():
         assert requirement in instructions
     assert selected['existing_queries'] == context['outputs']['planning']['queries']
     assert selected['research_gaps'] == context['outputs']['researching']['research_gaps']
-    assert selected['evidence'] == context['evidence']
+    assert selected['evidence'] == [context['evidence'][0] | {'id': '1'}]
