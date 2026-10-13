@@ -22,8 +22,8 @@ export function WorkflowTimeline({ decision }: { decision: Decision | null }) {
             className={done ? "done" : current ? "current" : ""}
             aria-current={current ? "step" : undefined}
           >
-            <span>{done ? "✓" : String(index + 1).padStart(2, "0")}</span>
-            {label}
+            <span className="step-mark">{done ? "✓" : index + 1}</span>
+            <span className="step-label">{label}</span>
           </li>
         );
       })}
@@ -32,7 +32,7 @@ export function WorkflowTimeline({ decision }: { decision: Decision | null }) {
 }
 export function EventLog({ decision }: { decision: Decision }) {
   return (
-    <details className="paper event-log" open={!decision.memo}>
+    <details className="card event-log" open={false}>
       <summary>
         执行轨迹 <span>{decision.events.length} 条记录</span>
       </summary>

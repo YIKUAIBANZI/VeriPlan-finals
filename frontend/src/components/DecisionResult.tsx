@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChallengePanel } from "./ChallengePanel";
+import { Cite } from "./Cite";
 import {
   statusLabels,
   recommendationLabels,
@@ -15,13 +16,9 @@ function Claims({ items }: { items: Claim[] }) {
       {items.map((item, index) => (
         <li key={index}>
           {item.text}
-          <span className="citations">
-            {item.evidence_ids?.map((id) => (
-              <a key={id} href={`#evidence-${id}`}>
-                查看引用来源
-              </a>
-            ))}
-          </span>
+          {Boolean(item.evidence_ids?.length) && <span className="citations">
+            {item.evidence_ids?.map((id) => <Cite key={id} id={id} />)}
+          </span>}
         </li>
       ))}
     </ul>
@@ -99,20 +96,30 @@ export function DecisionResult({
           {memo.score_explanation && (
             <p className="muted">{memo.score_explanation}</p>
           )}
-          <h3>
-            来源陈述（待人工核验）{" "}
-            <small>
-              {decision.mode === "live"
-                ? "联网来源中的陈述"
-                : "演示材料中的陈述"}
-            </small>
-          </h3>
-          <p className="muted">
-            引用只建立可回看关系，不代表系统已自动核验陈述与来源相互支持。
-          </p>
-          <Claims items={memo.facts ?? []} />
-          <h3>Agent 推断</h3>
-          <Claims items={memo.inferences ?? []} />
+          <details className="claims-block">
+            <summary>
+              <h3>
+                来源陈述（待人工核验）{" "}
+                <small>
+                  {decision.mode === "live"
+                    ? "联网来源中的陈述"
+                    : "演示材料中的陈述"}
+                </small>
+              </h3>
+              <span>{memo.facts?.length ?? 0} 条</span>
+              <p className="muted">
+                引用只建立可回看关系，不代表系统已自动核验陈述与来源相互支持。
+              </p>
+            </summary>
+            <Claims items={memo.facts ?? []} />
+          </details>
+          <details className="claims-block">
+            <summary>
+              <h3>Agent 推断</h3>
+              <span>{memo.inferences?.length ?? 0} 条</span>
+            </summary>
+            <Claims items={memo.inferences ?? []} />
+          </details>
           {Boolean(memo.research_gaps?.length) && (
             <div className="research-gap">
               <h3>仍需验证</h3>

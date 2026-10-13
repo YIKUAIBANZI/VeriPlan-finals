@@ -184,6 +184,13 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
       finished &&
       decision.research_queries.some((query) => query.status === "failed"),
   );
+  const pendingAction = decision && !modeMismatch ? (
+    decision.status === "awaiting_confirmation" ? null
+      : waitingToRun(decision) ? { title: "条件已确认，研究尚未启动", body: "已保存你的确认，可以继续研究。", label: "继续研究", run: () => api.runDecision(decision.id) }
+      : decision.status === "draft" ? { title: "决策已保存", body: "", label: "开始研究", run: () => api.runDecision(decision.id) }
+      : decision.status === "failed" ? { title: "执行中断，已保留完成的阶段", body: decision.failure?.message ?? "请重试以继续这个决策。", label: "重试失败阶段", run: () => api.retryDecision(decision.id), warn: true }
+      : null
+  ) : null;
   return (
     <div className="app-shell">
       <a className="skip-link" href="#workspace">
@@ -199,8 +206,9 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
       />
       <div className="main-shell">
         <header className="topbar">
-          <span>决策工作台</span>
-          <span className="demo-badge">
+          <span className="topbar-title">{page === "calibration" ? "偏差画像" : decision ? "决策工作台" : "新建决策"}</span>
+          <span className="mode-badge" data-live={liveUnlocked || undefined}>
+            <i aria-hidden="true" />
             {liveUnlocked
               ? "真实联网模式"
               : health?.mode === "live"
@@ -209,25 +217,6 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
           </span>
         </header>
         <main id="workspace">
-          <div className="page-title">
-            <div>
-              <p className="muted">一人公司的 AI 决策委员会</p>
-              <h1>{decision ? decision.question : "会停、会吵、会记住你的偏差"}</h1>
-            </div>
-            {decision && (
-              <span
-                className={`status-pill ${decision.status === "failed" ? "warn" : ""}`}
-                role="status"
-              >
-                {statusLabels[decision.status]}
-              </span>
-            )}
-          </div>
-          <p className="demo-notice">
-            {contentMode === "live"
-              ? "当前决策为真实联网决策；联网来源摘要仍需人工核验。"
-              : "当前使用合成证据与预置流程，不代表实时调研或真实经营结论。"}
-          </p>
           {error && (
             <div className="error-banner" role="alert">
               <span>{error}</span>
@@ -247,38 +236,46 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
               </button>
             </div>
           )}
-          {page === "decision" && decision?.status !== "retrospective" && <WorkflowTimeline decision={decision} />}
           {page === "calibration" ? (
             <CalibrationPanel api={api} mode={health?.mode} readOnlyReason={!health ? "正在确认运行模式…" : health.mode === "live" && !liveUnlocked ? "真实模式未解锁，暂不能录入。" : undefined}
               onCreated={created => { newDecision(); setDecision(created); void refreshLedger().catch(err => setError(err.message)); }} />
           ) : !decision ? (
-            <DecisionForm
-              key={formVersion}
-              initial={initial}
-              busy={busy}
-              disabled={writesLocked}
-              onSubmit={create}
-            />
+            <>
+              <DecisionForm
+                key={formVersion}
+                initial={initial}
+                busy={busy}
+                disabled={writesLocked}
+                onSubmit={create}
+              />
+              <p className="demo-notice">
+                {contentMode === "live"
+                  ? "真实联网模式：会调用模型和搜索服务，联网来源摘要仍需人工核验。"
+                  : "演示模式：使用合成证据与预置流程，不代表实时调研或真实经营结论。"}
+              </p>
+            </>
           ) : (
             <>
-              <div className="constraints">
-                <div>
-                  <span>决策窗口</span>
-                  <strong>{decision.time_window}</strong>
+              <div className="decision-head">
+                <div className="decision-eyebrow">
+                  <span
+                    className={`status-pill ${decision.status === "failed" ? "warn" : ""}`}
+                    role="status"
+                  >
+                    {statusLabels[decision.status]}
+                  </span>
+                  <span>{decision.mode === "live" ? "真实联网决策 · 联网来源摘要仍需人工核验" : "演示数据 · 合成证据，不代表真实经营结论"}</span>
                 </div>
-                <div>
-                  <span>预算上限</span>
-                  <strong>
-                    ¥{decision.budget_limit.toLocaleString("zh-CN")}
-                  </strong>
-                </div>
-                <div>
-                  <span>首要目标</span>
-                  <strong>{decision.primary_goal}</strong>
-                </div>
+                <h1 className="decision-question">{decision.question}</h1>
+                {decision.status !== "retrospective" && <dl className="constraints">
+                  <div><dt>决策窗口</dt><dd>{decision.time_window}</dd></div>
+                  <div><dt>预算上限</dt><dd>¥{decision.budget_limit.toLocaleString("zh-CN")}</dd></div>
+                  <div><dt>首要目标</dt><dd>{decision.primary_goal}</dd></div>
+                </dl>}
               </div>
+              {decision.status !== "retrospective" && <WorkflowTimeline decision={decision} />}
               {modeMismatch && health && (
-                <section className="paper boundary-paper">
+                <section className="card notice-card">
                   <span className="tag warn">历史任务只读</span>
                   <h2>运行模式不同，不能继续修改</h2>
                   <p>
@@ -293,164 +290,72 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                   </button>
                 </section>
               )}
-              <CouncilPanel decision={decision} />
               <div className="workspace-grid">
                 <div className="work-content">
-                  {decision.business_baseline && decision.baseline_analysis && (!decision.scenario || decision.scenario === "ai_tool_pilot") && <BusinessBaselinePanel
-                    baseline={decision.business_baseline}
-                    analysis={decision.baseline_analysis}
-                  />}
                   {decision.status === "awaiting_confirmation" && (
-                    <section className="paper clarification">
+                    <section className="card clarification">
                       <span className="tag">需要你的确认</span>
                       <h2>先对齐条件，再开始研究</h2>
                       <p>{decision.outputs.clarifying?.summary}</p>
-                      {Boolean(
-                        decision.outputs.clarifying?.assumptions?.length,
-                      ) && (
+                      {Boolean(decision.outputs.clarifying?.assumptions?.length) && (
                         <>
                           <h3>待确认的假设</h3>
                           <ul>
-                            {decision.outputs.clarifying.assumptions?.map(
-                              (s) => (
-                                <li key={s}>{s}</li>
-                              ),
-                            )}
+                            {decision.outputs.clarifying.assumptions?.map((s) => <li key={s}>{s}</li>)}
                           </ul>
                         </>
                       )}
-                      {Boolean(
-                        decision.outputs.clarifying?.questions?.length,
-                      ) && (
+                      {Boolean(decision.outputs.clarifying?.questions?.length) && (
                         <>
                           <h3>仍待验证的信息</h3>
                           <ul>
-                            {decision.outputs.clarifying.questions?.map((s) => (
-                              <li key={s}>{s}</li>
-                            ))}
+                            {decision.outputs.clarifying.questions?.map((s) => <li key={s}>{s}</li>)}
                           </ul>
                         </>
                       )}
                       {!modeMismatch && (
                         <div className="review-buttons">
-                          <button
-                            className="primary"
-                            disabled={busy || writesLocked}
-                            onClick={confirm}
-                          >
+                          <button className="primary" disabled={busy || writesLocked} onClick={confirm}>
                             确认条件并继续研究
                           </button>
-                          <button
-                            disabled={busy || writesLocked}
-                            onClick={() =>
-                              newDecision(copyDecisionInput(decision))
-                            }
-                          >
+                          <button disabled={busy || writesLocked} onClick={() => newDecision(copyDecisionInput(decision))}>
                             调整条件并新建
                           </button>
                         </div>
                       )}
                     </section>
                   )}
-                  {waitingToRun(decision) && !modeMismatch && (
-                    <section className="paper">
-                      <h2>条件已确认，研究尚未启动</h2>
-                      <p>已保存你的确认，可以继续研究。</p>
+                  {pendingAction && (
+                    <section className={`card notice-card${pendingAction.warn ? " warn" : ""}`}>
+                      <h2>{pendingAction.title}</h2>
+                      {pendingAction.body && <p>{pendingAction.body}</p>}
                       <button
                         className="primary"
                         disabled={busy || writesLocked}
-                        onClick={() =>
-                          void operate(() => api.runDecision(decision.id))
-                        }
+                        onClick={() => void operate(pendingAction.run)}
                       >
-                        继续研究
+                        {pendingAction.label}
                       </button>
                     </section>
                   )}
-                  {decision.status === "draft" && !modeMismatch && (
-                    <section className="paper">
-                      <h2>决策已保存</h2>
-                      <button
-                        className="primary"
-                        disabled={busy || writesLocked}
-                        onClick={() =>
-                          void operate(() => api.runDecision(decision.id))
-                        }
-                      >
-                        开始研究
-                      </button>
-                    </section>
+                  {activeStatuses.has(decision.status) && !waitingToRun(decision) && (
+                    <div className="running-note" role="status">
+                      <span className="pulse" />
+                      {busy ? "正在提交操作…" : `${statusLabels[decision.status]}，阶段结果将自动更新。`}
+                    </div>
                   )}
-                  {decision.status === "failed" && !modeMismatch && (
-                    <section className="paper failure-paper">
-                      <h2>执行中断，已保留完成的阶段</h2>
-                      <p>
-                        {decision.failure?.message ?? "请重试以继续这个决策。"}
-                      </p>
-                      <button
-                        className="primary"
-                        disabled={busy || writesLocked}
-                        onClick={() =>
-                          void operate(() => api.retryDecision(decision.id))
-                        }
-                      >
-                        重试失败阶段
-                      </button>
-                    </section>
-                  )}
-                  {activeStatuses.has(decision.status) &&
-                    !waitingToRun(decision) && (
-                      <div className="running-note" role="status">
-                        <span className="human-dot" />
-                        {busy
-                          ? "正在提交操作…"
-                          : `${statusLabels[decision.status]}，阶段结果将自动更新。`}
-                      </div>
-                    )}
-                  {decision.outputs.planning && (
-                    <details className="paper" open={!finished}>
-                      <summary>研究计划</summary>
-                      <p>{decision.outputs.planning.summary}</p>
-                      <ul>
-                        {(
-                          decision.outputs.planning.research_questions ??
-                          decision.outputs.planning.queries ??
-                          []
-                        ).map((query) => (
-                          <li key={query}>{query}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                  <ResearchQueries queries={decision.research_queries} />
-                  {finishedWithFailedQuery && (
-                    <section className="paper failure-paper">
-                      <h2>本次研究存在未完成查询</h2>
-                      <p>
-                        当前报告不会原地补查；补查会使分析、Memo
-                        和审批版本失效。请复制原条件重新研究。
-                      </p>
-                      <button
-                        className="primary"
-                        onClick={() => newDecision(copyDecisionInput(decision))}
-                      >
-                        复制条件重新研究
-                      </button>
-                    </section>
-                  )}
+                  <CouncilPanel decision={decision} />
+                  {decision.business_baseline && decision.baseline_analysis && (!decision.scenario || decision.scenario === "ai_tool_pilot") && <BusinessBaselinePanel
+                    baseline={decision.business_baseline}
+                    analysis={decision.baseline_analysis}
+                  />}
                   {decision.outputs.analyzing?.analyses && (
-                    <section className="paper">
+                    <section className="card">
                       <h2>三个视角，分别审查</h2>
                       <div className="analyses">
                         {decision.outputs.analyzing.analyses.map((item) => (
                           <article key={item.perspective}>
-                            <h3>
-                              {{
-                                growth: "增长机会",
-                                cost: "成本投入",
-                                risk: "体验风险",
-                              }[item.perspective] ?? item.perspective}
-                            </h3>
+                            <h3>{{ growth: "增长机会", cost: "成本投入", risk: "体验风险" }[item.perspective] ?? item.perspective}</h3>
                             <p>{item.conclusion}</p>
                           </article>
                         ))}
@@ -458,6 +363,15 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                     </section>
                   )}
                   {!finished && decision.status !== "retrospective" && <ChallengePanel decision={decision} />}
+                  {finishedWithFailedQuery && (
+                    <section className="card notice-card warn">
+                      <h2>本次研究存在未完成查询</h2>
+                      <p>当前报告不会原地补查；补查会使分析、Memo 和审批版本失效。请复制原条件重新研究。</p>
+                      <button className="primary" onClick={() => newDecision(copyDecisionInput(decision))}>
+                        复制条件重新研究
+                      </button>
+                    </section>
+                  )}
                   {finished && (
                     <DecisionResult
                       key={decision.id}
@@ -468,24 +382,40 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
                       onPrint={() => window.print()}
                       busy={busy || exporting}
                       writeDisabled={writesLocked}
-                      readOnlyReason={
-                        modeMismatch
-                          ? "历史任务来自另一运行模式，当前只读。"
-                          : undefined
-                      }
+                      readOnlyReason={modeMismatch ? "历史任务来自另一运行模式，当前只读。" : undefined}
                     />
                   )}
                   <OutcomesPanel key={`outcomes-${decision.id}`} decision={decision} busy={busy || writesLocked}
                     readOnlyReason={modeMismatch ? "历史任务来自另一运行模式，当前只读。" : undefined}
                     onSave={input => { if (!modeMismatch && !writesLocked) void operate(() => api.saveOutcomes(decision.id, input)); }} />
+                  {(decision.outputs.planning || decision.research_queries.length > 0) && (
+                    <details className="card process" open={!finished}>
+                      <summary>
+                        <span>研究过程</span>
+                        <small>{decision.research_queries.length} 条检索 · {decision.evidence.length} 条证据</small>
+                      </summary>
+                      {decision.outputs.planning && (
+                        <div className="research-plan">
+                          <h3>研究计划</h3>
+                          <p>{decision.outputs.planning.summary}</p>
+                          <ul>
+                            {(decision.outputs.planning.research_questions ?? decision.outputs.planning.queries ?? []).map((query) => (
+                              <li key={query}>{query}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <ResearchQueries queries={decision.research_queries} />
+                    </details>
+                  )}
                   {decision.status !== "retrospective" && <EventLog decision={decision} />}
                 </div>
-                <EvidencePanel evidence={decision.evidence} />
+                {decision.status !== "retrospective" && <EvidencePanel evidence={decision.evidence} />}
               </div>
             </>
           )}
           <footer className="page-footer">
-            证策 VeriPlan <span>证据 · 质询 · 人工决策</span>
+            <span>证策 VeriPlan</span><span>证据 · 质询 · 人工决策</span>
           </footer>
         </main>
       </div>

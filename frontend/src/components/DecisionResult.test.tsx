@@ -116,7 +116,7 @@ describe("DecisionResult trust boundaries", () => {
     expect(
       screen.getByRole("heading", { name: /来源陈述（待人工核验）/ }),
     ).toBeVisible();
-    expect(screen.getAllByRole("link", { name: "查看引用来源" })).toHaveLength(3);
+    expect(screen.getAllByRole("link", { name: /^证据 / })).toHaveLength(3);
     expect(screen.getByText(/引用只建立可回看关系/)).toBeVisible();
     expect(screen.getByText("仍需核对真实工单基线")).toBeVisible();
     expect(screen.queryByText(/已核验支持/)).not.toBeInTheDocument();
