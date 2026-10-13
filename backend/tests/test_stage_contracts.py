@@ -30,6 +30,47 @@ def test_demo_outputs_satisfy_shared_contract(stage):
     assert validate_stage_output(stage, payload, context)["summary"]
 
 
+@pytest.mark.parametrize("scenario", ["ai_tool_pilot", "first_hire", "big_order", "marketing_spend", "general"])
+def test_demo_planning_covers_distinct_dimensions_with_short_public_search_queries(scenario):
+    context = context_with_evidence()
+    context.update(scenario=scenario, primary_goal="调取近12个月订单记录核算新增人员带来的收益",
+                   time_window="在未来九十天内完成验证")
+    payload = DemoModelProvider().generate("planning", context)
+    queries = payload["queries"]
+
+    assert len(queries) == 3  # All three dimensions must survive the workflow limit.
+    for query, terms in zip(queries, [
+        ("能力边界", "真实案例", "失败案例"),
+        ("价格", "行业基准", "隐性成本"),
+        ("法律", "平台规则", "合同"),
+    ]):
+        assert isinstance(query, str) and len(query) <= 80
+        assert all(term in query for term in terms)
+        assert context["primary_goal"] not in query
+        assert context["time_window"] not in query
+        assert str(context["budget_limit"]) not in query
+    assert len(set(queries)) == 3
+
+
+def test_demo_followup_adds_market_coverage_and_cost_detail_without_repeating_queries():
+    context = context_with_evidence()
+    provider = DemoModelProvider()
+    context['outputs']['planning'] = provider.generate('planning', context)
+    context['_research_followup'] = True
+
+    followup = provider.generate('planning', context)
+
+    assert set(followup) == {'queries'}
+    assert len(followup['queries']) == 2
+    assert not set(followup['queries']) & set(context['outputs']['planning']['queries'])
+    assert any('客户' in query and 'market' in query for query in followup['queries'])
+    assert any('隐性成本' in query for query in followup['queries'])
+    cards = [card for query in followup['queries'] for card in DemoSearchProvider().search(query)]
+    assert len({card.source_url for card in cards}) == 2
+    assert all(card.is_demo and '.invalid/' in card.source_url for card in cards)
+    assert any('market' in card.summary for card in cards)
+
+
 def test_contract_overwrites_confirmed_constraint_rewrite():
     context = context_with_evidence()
     payload = DemoModelProvider().generate("clarifying", context)

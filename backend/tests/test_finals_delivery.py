@@ -100,8 +100,8 @@ def test_live_smoke_full_path_uses_mock_transport_and_reports_only_safe_metrics(
         model_provider='openai_compat', openai_compat_api_key='never-print-model', tavily_api_key='never-print-search'))
     assert result['passed'] and result['within_120_seconds']
     assert result['final_status'] == 'deferred'
-    assert result['provider_call_count'] == 10  # eight model calls and two search queries
-    assert len(result['provider_calls']) == 10
+    assert result['provider_call_count'] == 11  # eight model calls and three search queries
+    assert len(result['provider_calls']) == 11
     assert all(set(call) == {'logical_operation', 'status', 'error_code', 'profile', 'model'} for call in result['provider_calls'])
     assert all(call['status'] == 'succeeded' and call['error_code'] is None for call in result['provider_calls'])
     assert len(result['human_gates']) == 2

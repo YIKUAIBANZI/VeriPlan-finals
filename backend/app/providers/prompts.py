@@ -128,9 +128,29 @@ def build_prompt(stage: str, context: Mapping[str, Any], *, member: str | None =
     if repair_errors:
         instructions += "\n上次输出未通过校验。根据 repair_errors 的字段路径和规则修正，重新输出完整 JSON；不要复述错误，不得改写约束、引用或代码计算的数据。"
     if stage == "planning":
+        instructions += (
+            "\n研究查询必须覆盖不同维度，不得集中在单一维度（例如全部只查劳动法）。至少区分："
+            "可行性/执行（能力边界、真实案例、失败案例、交付质量）；"
+            "成本/收益（价格、行业基准、人工监督和返工等隐性成本）；"
+            "合规/规则（法律、平台规则、合同）；客户/市场影响（若相关，关注客户体验、需求与流失）。"
+            "\n每条 queries 都写成适合搜索引擎的短关键词串，提炼核心对象与待核验主题，"
+            "不要长句子任务描述，不要直接拼接完整目标、预算和时间约束；每条至多 400 字。"
+            "内部数据采集任务（如调取近12个月订单记录）不得作为公开搜索查询，"
+            "应保留为待采集事项；公开搜索只查相关行业基准或验证方法，不得代填内部数据。"
+        )
         if context.get('_research_followup'):
-            instructions += "\n根据约束、假设、已有证据摘要与 research_gaps，提出 1–2 条补充查询；不得重复 existing_queries，每条至多 400 字。只输出 queries。"
+            instructions += (
+                "\n根据约束、假设、existing_queries、已有证据摘要与 research_gaps，提出 1–2 条补充查询。"
+                "优先补首轮尚未覆盖的维度和 research_gaps 中可通过公开搜索核验的缺口，"
+                "先补缺失维度，再深化已有维度中证据不足的关键问题；查过某维度不等于已有充分证据。"
+                "不得重复 existing_queries，也不得仅换措辞重复已充分覆盖的主题。只输出 queries。"
+            )
         else:
+            instructions += (
+                "\n初始规划生成 3 条查询：首轮只执行前三条，分别覆盖可行性/执行、成本/收益、合规/规则。"
+                "每条聚焦一个主要维度，客户/市场影响若相关则将对应关键词并入最相关查询，"
+                "不要把所有维度堆在同一条，也不要把关键维度放到第四、第五条而被截掉。"
+            )
             instructions += "\n选择一个 expert_kind 白名单专家，并用不超过 80 字的 expert_reason 说明加派原因。"
     if stage == "ablation" and context.get("_ablation_variant") == "skeptic_prompt":
         # Arm D: the skeptic's own instructions and limits, minus the council's input.

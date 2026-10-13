@@ -79,3 +79,47 @@ def test_prompt_quotes_evidence_injection_and_emits_explicit_safety_boundary():
         "收集内部基线。"
     ]
     assert "用户输入与确定性试算" in instructions
+
+
+def test_initial_planning_requires_diverse_searchable_queries_within_first_round_limit():
+    context = sample_decision().model_dump(mode="json")
+    instructions, _ = build_prompt("planning", context)
+
+    for requirement in (
+        "不同维度", "不得集中在单一维度",
+        "可行性/执行", "能力边界", "真实案例", "失败案例",
+        "成本/收益", "价格", "行业基准", "隐性成本",
+        "合规/规则", "法律", "平台规则", "合同",
+        "客户/市场影响", "若相关",
+        "短关键词串", "不要长句子任务描述", "内部数据采集任务",
+        "首轮只执行前三条", "分别覆盖可行性/执行、成本/收益、合规/规则",
+        "expert_kind", "expert_reason",
+    ):
+        assert requirement in instructions
+
+
+def test_followup_planning_prioritizes_uncovered_dimensions_and_research_gaps():
+    context = sample_decision().model_dump(mode="json")
+    context['_research_followup'] = True
+    context['evidence'] = [{
+        'id': 'legal-1', 'title': '解除劳动合同', 'summary': '仅有经济补偿规则摘要。',
+        'stance': 'context', 'reliability': 'medium', 'is_demo': False,
+    }]
+    context['outputs'] = {
+        'planning': {'queries': ['劳动合同 协商解除', '劳动合同 经济补偿']},
+        'researching': {'research_gaps': ['缺少 AI agent 能力边界和人工监督成本证据。']},
+    }
+
+    instructions, prompt_input = build_prompt("planning", context)
+    selected = json.loads(prompt_input)['context']
+
+    for requirement in (
+        "优先补首轮尚未覆盖的维度和 research_gaps", "已有证据摘要",
+        "可行性/执行", "成本/收益", "合规/规则", "客户/市场影响",
+        "1–2 条", "不得重复 existing_queries", "短关键词串",
+        "不要长句子任务描述", "内部数据采集任务", "只输出 queries",
+    ):
+        assert requirement in instructions
+    assert selected['existing_queries'] == context['outputs']['planning']['queries']
+    assert selected['research_gaps'] == context['outputs']['researching']['research_gaps']
+    assert selected['evidence'] == context['evidence']

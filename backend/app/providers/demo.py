@@ -14,7 +14,7 @@ class DemoSearchProvider:
         call_context: ProviderCallContext | None = None,
     ) -> list[EvidenceCard]:
         if query.startswith('veriplan followup '):
-            topic = 'cost' if 'cost' in query else 'risk'
+            topic = 'market' if 'market' in query else 'cost' if 'cost' in query else 'risk'
             return [EvidenceCard(title=f'模拟：补充核验 {topic}',
                 summary=f'合成补充材料 {topic}：需采集真实对照数据并核验停止条件。',
                 source_url=f'https://demo.invalid/followup-{topic}',
@@ -70,8 +70,20 @@ class DemoModelProvider:
             return {'summary': '演示澄清：请确认目标和约束后再继续。', 'question': context['question'], 'time_window': window, 'budget_limit': budget, 'primary_goal': goal, 'assumptions': [f'当前演示{subject}，尚无真实业务结果。', '所有来源材料均为合成示例，尚无真实业务数据。', baseline_note], 'questions': ['你是否确认上述目标、预算、时间约束，并同意先评估受限试点？']}
         if stage == 'planning':
             if context.get('_research_followup'):
-                return {'queries': ['veriplan followup cost validation', 'veriplan followup risk verification']}
-            return {'summary': '演示研究计划：分别检查业务基线与失败风险。', 'queries': [f'{subject} baseline cost {goal} {window} budget {budget}', f'{subject} risk failure counterevidence {goal}'], 'research_questions': ['真实业务基线是否支持受限试点？', '哪些失败风险会改变试点建议？']}
+                return {'queries': [f'veriplan followup {subject} market 客户满意度 投诉 流失案例',
+                                    f'veriplan followup {subject} cost 人工监督 返工 隐性成本']}
+            return {
+                'summary': '演示研究计划：分别检查可行性与失败案例、成本收益、合规规则，并补查客户影响。',
+                'queries': [
+                    f'{subject} 能力边界 真实案例 失败案例 交付质量 risk',
+                    f'{subject} 价格 行业基准 隐性成本',
+                    f'{subject} 法律 平台规则 合同',
+                ],
+                'research_questions': ['能力边界和真实失败案例是否支持执行？',
+                                       '收益能否覆盖价格、人工监督与返工成本？',
+                                       '法律、平台规则和合同有哪些限制？',
+                                       '客户体验与市场需求会受到什么影响？'],
+            }
         if stage == 'analyzing':
             role = context.get('_council_member')
             if role is None:

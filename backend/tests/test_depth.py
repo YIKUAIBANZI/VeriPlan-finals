@@ -230,7 +230,7 @@ def test_two_rounds_execute_five_queries_and_deduplicate_evidence(tmp_path):
     assert all(card.research_query_id for card in result.evidence)
 
 
-@pytest.mark.parametrize('interrupt_at', [3, 4])
+@pytest.mark.parametrize('interrupt_at', [4, 5])
 def test_followup_plan_survives_restart_without_replanning_or_repeating_successes(tmp_path, interrupt_at):
     calls = []
 
@@ -264,7 +264,7 @@ def test_followup_plan_survives_restart_without_replanning_or_repeating_successe
     result = restarted.retry(failed.id)
     assert result.status == 'awaiting_review', result.failure
     assert model.followups == 1
-    assert calls.count(calls[0]) == calls.count(calls[1]) == 1
+    assert all(calls.count(query) == 1 for query in calls[:3])
     assert calls.count(calls[interrupt_at - 1]) == 2
     assert len(result.evidence) > 3 and all(card.is_demo for card in result.evidence)
 
@@ -347,7 +347,7 @@ def test_second_round_can_rescue_empty_live_research_but_never_invents_evidence(
     repo = DecisionRepository(tmp_path / 'db')
     engine = WorkflowEngine(repo, search_provider=Search(), mode='live', settings=Settings(research_rounds=2))
     result = run_decision(repo, engine, mode='live')
-    assert len(calls) == 4  # Failed first-round queries are not retried in round two.
+    assert len(calls) == 5  # Failed first-round queries are not retried in round two.
     if rescued:
         assert result.status == 'awaiting_review'
         assert len(result.evidence) == 1 and not result.evidence[0].is_demo
