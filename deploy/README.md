@@ -11,7 +11,7 @@
 
 ```sh
 cd frontend && npm run build && cd ..
-rsync -az --delete --exclude=.env --exclude=.git --exclude=.venv --exclude=node_modules --exclude='*.db' --exclude=docs --exclude=artifacts ./ banzi:/opt/veriplan/
+rsync -az --delete --exclude=.env --exclude=data --exclude=.git --exclude=.venv --exclude=node_modules --exclude='*.db' --exclude=docs --exclude=artifacts ./ banzi:/opt/veriplan/
 ssh banzi 'cd /opt/veriplan/backend && .venv/bin/pip install -q -e . && sudo systemctl restart veriplan'
 ```
 
