@@ -1,0 +1,13 @@
+[Unit]
+Description=VeriPlan API (finals)
+After=network.target
+
+[Service]
+User=veriplan
+WorkingDirectory=/opt/veriplan/backend
+EnvironmentFile=/opt/veriplan/.env
+ExecStart=/opt/veriplan/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 9195
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
