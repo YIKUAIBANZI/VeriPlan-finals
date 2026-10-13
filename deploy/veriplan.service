@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 User=veriplan
+Group=veriplan
 WorkingDirectory=/opt/veriplan/backend
 EnvironmentFile=/opt/veriplan/.env
 ExecStart=/opt/veriplan/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 9195

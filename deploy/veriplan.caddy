@@ -1,0 +1,20 @@
+
+# VeriPlan finals demo (HAIC) - Live mode spends real API credits, so basic auth guards the whole site.
+veriplan.yikuaibanz.cn {
+	encode gzip
+	basic_auth {
+		veriplan <caddy hash-password output>
+	}
+	handle /api/* {
+		reverse_proxy 127.0.0.1:9195 {
+			transport http {
+				response_header_timeout 300s
+			}
+		}
+	}
+	handle {
+		root * /opt/veriplan/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}
