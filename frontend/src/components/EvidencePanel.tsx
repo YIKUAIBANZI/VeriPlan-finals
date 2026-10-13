@@ -68,7 +68,7 @@ export function EvidencePanel({ evidence }: { evidence: Evidence[] }) {
               ? "包含联网来源摘要；它们是第三方信息，尚未独立核验。"
               : "当前展示合成演示资料，未经联网核验。"}
           </p>
-          <div className="evidence-filters" role="group" aria-label="按立场筛选">
+          {Object.keys(counts).length > 1 && <div className="evidence-filters" role="group" aria-label="按立场筛选">
             {(["all", "supports", "opposes", "context"] as Filter[]).map((key) => {
               const n = key === "all" ? evidence.length : counts[key] ?? 0;
               if (key !== "all" && !n) return null;
@@ -78,7 +78,7 @@ export function EvidencePanel({ evidence }: { evidence: Evidence[] }) {
                 </button>
               );
             })}
-          </div>
+          </div>}
         </>
       )}
       {evidence.length ? (
