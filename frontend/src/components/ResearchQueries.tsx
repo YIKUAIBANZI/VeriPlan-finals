@@ -11,11 +11,8 @@ export function ResearchQueries({ queries }: { queries: ResearchQuery[] }) {
   if (!queries.length) return null;
 
   return (
-    <section className="paper research-queries" aria-label="公开搜索计划">
-      <div className="section-heading">
-        <h2>公开搜索计划</h2>
-        <span>最多 3 个查询</span>
-      </div>
+    <section className="research-queries" aria-label="公开搜索计划">
+      <h3>公开检索</h3>
       <ol>
         {queries.map((item) => (
           <li key={item.id} data-status={item.status}>

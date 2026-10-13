@@ -1,49 +1,24 @@
 import { useState } from "react";
-import type { BusinessBaseline, DecisionInput } from "../types";
+import type { BusinessBaseline, DecisionInput, HorizonDays, Scenario } from "../types";
 import { emptyBaseline, scenarioExamples, scenarioLabels } from "../fixtures/scenarios";
 import { AssumptionEditor } from "./AssumptionEditor";
-import type { HorizonDays, Scenario } from "../types";
-const example = scenarioExamples.ai_tool_pilot;
 
-const baselineGroups: {
-  title: string;
-  fields: {
-    key: keyof BusinessBaseline;
-    label: string;
-    suffix: string;
-    max: number;
-    step: number;
-  }[];
-}[] = [
-  {
-    title: "规模",
-    fields: [
-      { key: "monthly_ticket_volume", label: "月售后工单量", suffix: "条", max: 10000000, step: 1 },
-      { key: "repetitive_ticket_rate", label: "重复咨询占比", suffix: "%", max: 100, step: 0.1 },
-    ],
-  },
-  {
-    title: "当前成本",
-    fields: [
-      { key: "average_handle_minutes", label: "平均处理时长", suffix: "分钟", max: 1440, step: 0.1 },
-      { key: "loaded_hourly_cost", label: "综合人力时薪", suffix: "元", max: 1000000, step: 0.01 },
-    ],
-  },
-  {
-    title: "AI 试点假设",
-    fields: [
-      { key: "expected_ai_resolution_rate", label: "预计 AI 独立解决率", suffix: "%", max: 100, step: 0.1 },
-      { key: "review_minutes_per_ai_ticket", label: "单条 AI 工单复核时长", suffix: "分钟", max: 1440, step: 0.1 },
-    ],
-  },
-  {
-    title: "成本与风险门槛",
-    fields: [
-      { key: "monthly_tool_cost", label: "预计月工具成本", suffix: "元", max: 10000000, step: 0.01 },
-      { key: "max_acceptable_error_rate", label: "可接受最大误答率", suffix: "%", max: 100, step: 0.1 },
-    ],
-  },
+const blank: DecisionInput = {
+  scenario: "general", question: "", horizon_days: 30, budget_limit: Number.NaN,
+  primary_goal: "", known_risks: [], assumptions: [],
+};
+
+const baselineFields: { key: keyof BusinessBaseline; label: string; suffix: string; max: number; step: number }[] = [
+  { key: "monthly_ticket_volume", label: "月售后工单量", suffix: "条", max: 10000000, step: 1 },
+  { key: "repetitive_ticket_rate", label: "重复咨询占比", suffix: "%", max: 100, step: 0.1 },
+  { key: "average_handle_minutes", label: "平均处理时长", suffix: "分钟", max: 1440, step: 0.1 },
+  { key: "loaded_hourly_cost", label: "综合人力时薪", suffix: "元", max: 1000000, step: 0.01 },
+  { key: "expected_ai_resolution_rate", label: "预计 AI 独立解决率", suffix: "%", max: 100, step: 0.1 },
+  { key: "review_minutes_per_ai_ticket", label: "单条 AI 工单复核时长", suffix: "分钟", max: 1440, step: 0.1 },
+  { key: "monthly_tool_cost", label: "预计月工具成本", suffix: "元", max: 10000000, step: 0.01 },
+  { key: "max_acceptable_error_rate", label: "可接受最大误答率", suffix: "%", max: 100, step: 0.1 },
 ];
+
 export function DecisionForm({
   busy,
   disabled = false,
@@ -55,136 +30,157 @@ export function DecisionForm({
   onSubmit: (input: DecisionInput) => void;
   initial?: DecisionInput;
 }) {
-  const [value, setValue] = useState<DecisionInput>(initial ?? {
-    ...example, question: "", known_risks: [], assumptions: [], business_baseline: { ...emptyBaseline },
-  });
+  const [value, setValue] = useState<DecisionInput>(initial ?? blank);
+  const [risks, setRisks] = useState((initial?.known_risks ?? []).join("\n"));
+  const [fromExample, setFromExample] = useState(false);
+  const riskLines = risks.split("\n").map(line => line.trim()).filter(Boolean);
+  const hasDetails = riskLines.length > 0 || value.assumptions.length > 0;
+
+  function fill(scenario: Scenario) {
+    const example = structuredClone(scenarioExamples[scenario]);
+    setValue(example);
+    setRisks(example.known_risks.join("\n"));
+    setFromExample(true);
+  }
+
   return (
-    <section className="paper create-paper">
-      <div className="form-intro">
-        <span className="section-number">开始一个有依据的决定</span>
-        <h2>这次，你在犹豫什么？</h2>
-        <p>
-          把问题和边界说清楚。先确认决策条件，再查看证据、反方意见和验证计划。
-        </p>
-      </div>
+    <section className="composer">
+      <p className="eyebrow">新建决策</p>
+      <h1 className="display">这次，你在犹豫什么？</h1>
+      <p className="lede">用一两句话说清楚。委员会先和你对齐条件，再去找证据、互相质疑。</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           if (busy || disabled) return;
           const { business_baseline, ...input } = value;
-          onSubmit({ ...input, known_risks: value.known_risks.map(risk => risk.trim()).filter(Boolean),
+          onSubmit({
+            ...input,
+            known_risks: riskLines.slice(0, 5),
             ...(value.scenario === "ai_tool_pilot" ? { business_baseline: business_baseline ?? { ...emptyBaseline } } : {}),
           });
         }}
       >
-        <div className="scenario-cards" aria-label="决策场景">
-          {(Object.keys(scenarioLabels) as Scenario[]).map(scenario => <article key={scenario} data-selected={value.scenario === scenario}>
-            <button type="button" aria-pressed={value.scenario === scenario} onClick={() => {
-              const { business_baseline: _baseline, ...rest } = value;
-              setValue({ ...rest, scenario, ...(scenario === "ai_tool_pilot" ? { business_baseline: { ...emptyBaseline } } : {}) });
-            }}>{scenarioLabels[scenario]}</button>
-            <button type="button" className="text-button" onClick={() => setValue(structuredClone(scenarioExamples[scenario]))}>填入 {scenarioLabels[scenario]}示例</button>
-          </article>)}
+        <div className="question-box">
+          <textarea
+            id="question"
+            aria-label="经营决策问题"
+            required
+            minLength={12}
+            maxLength={1000}
+            rows={4}
+            value={value.question}
+            onChange={(e) => setValue({ ...value, question: e.target.value })}
+            placeholder="比如：接单已经排到 6 周后，要不要每月花 1.2 万招第一个设计助理？"
+          />
+          <div className="example-row" aria-label="示例">
+            <span>试试示例</span>
+            {(Object.keys(scenarioLabels) as Scenario[]).map(scenario => (
+              <button
+                key={scenario}
+                type="button"
+                className="chip"
+                aria-label={`填入 ${scenarioLabels[scenario]}示例`}
+                aria-pressed={fromExample && value.scenario === scenario}
+                onClick={() => fill(scenario)}
+              >
+                {scenarioLabels[scenario]}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="synthetic-note">示例均为合成演示数字，请替换为你的实际假设。</p>
-        <label htmlFor="question">经营决策问题</label>
-        <textarea
-          id="question"
-          required
-          minLength={12}
-          maxLength={1000}
-          rows={5}
-          value={value.question}
-          onChange={(e) => setValue({ ...value, question: e.target.value })}
-          placeholder="例如：该直接上线 AI 售后客服，还是先做小范围验证？"
-        />
-        <div className="form-grid">
-          <div>
-            <label htmlFor="window">时间窗口</label>
-            <select id="window" value={value.horizon_days} onChange={e => setValue({ ...value, horizon_days: Number(e.target.value) as HorizonDays })}>
+        {fromExample && <p className="synthetic-note">示例里的数字是合成的，换成你自己的再提交。</p>}
+
+        <div className="essentials">
+          <label>
+            <span>多久内要定</span>
+            <select id="window" aria-label="时间窗口" value={value.horizon_days} onChange={e => setValue({ ...value, horizon_days: Number(e.target.value) as HorizonDays })}>
               {[7, 14, 30, 90, 180, 365].map(days => <option key={days} value={days}>{days} 天</option>)}
             </select>
-          </div>
-          <div>
-            <label htmlFor="budget">预算上限（元）</label>
+          </label>
+          <label>
+            <span>最多花多少</span>
+            <div className="affix">
+              <input
+                id="budget"
+                aria-label="预算上限（元）"
+                required
+                type="number"
+                min={0}
+                max={10000000}
+                step={1}
+                placeholder="例如 30000"
+                value={Number.isFinite(value.budget_limit) ? value.budget_limit : ""}
+                onChange={(e) => setValue({ ...value, budget_limit: e.target.valueAsNumber })}
+              />
+              <span>元</span>
+            </div>
+          </label>
+          <label className="wide">
+            <span>最想达成什么</span>
             <input
-              id="budget"
+              id="goal"
+              aria-label="首要目标"
               required
-              type="number"
-              min={0}
-              max={10000000}
-              step={1}
-              value={value.budget_limit}
-              onChange={(e) =>
-                setValue({ ...value, budget_limit: e.target.valueAsNumber })
-              }
+              maxLength={200}
+              placeholder="例如：三个月内产能翻倍，口碑不降"
+              value={value.primary_goal}
+              onChange={(e) => setValue({ ...value, primary_goal: e.target.value })}
             />
-          </div>
+          </label>
         </div>
-        <label htmlFor="goal">首要目标</label>
-        <input
-          id="goal"
-          required
-          maxLength={200}
-          value={value.primary_goal}
-          onChange={(e) => setValue({ ...value, primary_goal: e.target.value })}
-        />
-        <fieldset className="known-risks">
-          <legend>你已经想到的风险（最多 5 条）</legend>
-          {value.known_risks.map((risk, index) => <div className="risk-input" key={index}>
-            <input aria-label={`已知风险 ${index + 1}`} maxLength={200} value={risk} onChange={e => setValue({ ...value, known_risks: value.known_risks.map((r, i) => i === index ? e.target.value : r) })} />
-            <button type="button" aria-label={`删除风险 ${index + 1}`} onClick={() => setValue({ ...value, known_risks: value.known_risks.filter((_, i) => i !== index) })}>删除</button>
-          </div>)}
-          <button type="button" disabled={value.known_risks.length >= 5} onClick={() => setValue({ ...value, known_risks: [...value.known_risks, ""] })}>添加已知风险</button>
-        </fieldset>
-        <AssumptionEditor value={value.assumptions} onChange={assumptions => setValue({ ...value, assumptions })} />
-        {value.scenario === "ai_tool_pilot" && <details className="baseline-form">
 
+        <details className="more" open={Boolean(initial && hasDetails) || undefined}>
           <summary>
-            <span>业务基线（可选）</span>
-            <small>留空即未知，系统不会用行业均值补齐</small>
+            <span>补充你已想到的风险和数字假设</span>
+            <small>{hasDetails ? `已填 ${riskLines.length} 条风险 · ${value.assumptions.length} 条假设` : "可选 · 写得越具体，反方越能挑出你没想到的"}</small>
           </summary>
-          <p className="baseline-intro">
-            这些数字会随决策冻结。信息齐全时才生成收益试算；缺失项会变成采集任务。
-          </p>
-          <div className="baseline-input-groups">
-            {baselineGroups.map((group) => (
-              <fieldset key={group.title}>
-                <legend>{group.title}</legend>
-                {group.fields.map((field) => (
-                  <div className="baseline-input" key={field.key}>
-                    <label htmlFor={field.key}>{field.label}</label>
-                    <div>
+          <label className="block-label">
+            <span>已经想到的风险（每行一条，最多 5 条）</span>
+            <textarea
+              aria-label="已知风险"
+              rows={3}
+              value={risks}
+              onChange={e => setRisks(e.target.value)}
+              placeholder={"客户可能拖欠尾款\n招来的人带不起来"}
+            />
+          </label>
+          {riskLines.length > 5 && <p className="field-hint">只会提交前 5 条。</p>}
+          <AssumptionEditor value={value.assumptions} onChange={assumptions => setValue({ ...value, assumptions })} />
+          {value.scenario === "ai_tool_pilot" && (
+            <details className="baseline-form">
+              <summary>业务基线（可选）<small>留空即未知，系统不会用行业均值补齐</small></summary>
+              <div className="baseline-grid">
+                {baselineFields.map((field) => (
+                  <label key={field.key}>
+                    <span>{field.label}</span>
+                    <div className="affix">
                       <input
                         id={field.key}
+                        aria-label={field.label}
                         type="number"
                         min={0}
                         max={field.max}
                         step={field.step}
                         value={value.business_baseline?.[field.key] ?? ""}
-                        onChange={(event) =>
-                          setValue({
-                            ...value,
-                            business_baseline: {
-                              ...(value.business_baseline ?? emptyBaseline),
-                              [field.key]:
-                                event.target.value === ""
-                                  ? null
-                                  : event.target.valueAsNumber,
-                            },
-                          })
-                        }
+                        onChange={(event) => setValue({
+                          ...value,
+                          business_baseline: {
+                            ...(value.business_baseline ?? emptyBaseline),
+                            [field.key]: event.target.value === "" ? null : event.target.valueAsNumber,
+                          },
+                        })}
                       />
                       <span>{field.suffix}</span>
                     </div>
-                  </div>
+                  </label>
                 ))}
-              </fieldset>
-            ))}
-          </div>
-        </details>}
+              </div>
+            </details>
+          )}
+        </details>
+
         <div className="form-bottom">
-          <p>先确认条件，再由委员会审查。</p>
+          <p>提交后会先请你确认条件，再开始检索。</p>
           <button className="primary" disabled={busy || disabled} type="submit">
             {busy ? "正在创建…" : "创建并开始研究"}
           </button>

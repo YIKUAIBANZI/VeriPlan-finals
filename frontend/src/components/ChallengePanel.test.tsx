@@ -9,7 +9,7 @@ it("uses the server novelty count, discloses severity, targets and known risk ov
   expect(screen.getByRole("heading", { name: "反方提出 1 条你没写过的风险" })).toBeVisible();
   expect(screen.getByText(/假设 90 天后失败/)).toBeVisible();
   expect(screen.getByText("阻断风险")).toBeVisible();
-  expect(screen.getByText("🆕 你没想到")).toBeVisible();
+  expect(screen.getByText("你没想到")).toBeVisible();
   expect(screen.getByText(/你已提到：需求不稳定/)).toBeVisible();
   expect(screen.getAllByText(/针对假设：A1/)).toHaveLength(2);
 });

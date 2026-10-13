@@ -1,6 +1,7 @@
 import type { CouncilRole, Decision, Stance } from "../types";
 import { expertLabels } from "../types";
 import { assumptionName } from "../assumptionName";
+import { Citations } from "./Cite";
 const roles: Record<CouncilRole, string> = { opportunity: "机会官", cfo: "财务官", risk: "风险官", expert: "专项专家" };
 const stances: Record<Stance, string> = { support: "支持", oppose: "反对", conditional: "有条件支持" };
 export function CouncilPanel({ decision }: { decision: Decision }) {
@@ -16,8 +17,8 @@ export function CouncilPanel({ decision }: { decision: Decision }) {
   const visibleRoles = (Object.keys(roles) as CouncilRole[]).filter(role =>
     !running && output?.members ? output.members.some(m => m.role === role) : role !== "expert" || hasExpert);
   const allComplete = visibleRoles.every(role => [...events].reverse().find(e => e.stage === `council:${role}`)?.status === "completed");
-  return <section className="paper council-panel" aria-label="AI 决策委员会">
-    <div className="section-heading"><h2>AI 决策委员会</h2>{decision.mode === "demo" && <span className="demo-badge">Demo · 合成</span>}</div>
+  return <section className="card council-panel" aria-label="AI 决策委员会">
+    <div className="section-heading"><h2>委员会</h2>{decision.mode === "demo" && <span className="demo-badge">Demo · 合成</span>}</div>
     {output?.disagreement?.is_split && (!running || allComplete) && <p className="council-split" role="status">委员会意见分裂</p>}
     <div className={`council-seats${visibleRoles.length === 3 ? " legacy-seats" : ""}`}>
       {visibleRoles.map(role => {
@@ -41,12 +42,12 @@ export function CouncilPanel({ decision }: { decision: Decision }) {
           {member?.fallback_from && <span className="fallback-badge">已切换备用模型</span>}
           <div aria-live="polite" aria-atomic="true">
             {member ? <div className="council-conclusion">
-              <strong className="stance">{stances[member.stance]}</strong>
-              <h4>{member.headline}</h4><p>{member.reasoning}</p>
+              <p className="stance" data-stance={member.stance}><i className="stance-dot" data-stance={member.stance} aria-hidden="true" />{stances[member.stance]}</p>
+              <h4>{member.headline}</h4>
               <ul>{member.key_points.map(point => <li key={point}>{point}</li>)}</ul>
-              <p className="member-meta">委员信心 {member.confidence}%</p>
-              {!!member.challenged_assumption_ids.length && <p>质疑假设：{member.challenged_assumption_ids.map(id => assumptionName(decision, id)).join("、")}</p>}
-              <div className="citations">{member.evidence_ids.map(id => <a key={id} href={`#evidence-${id}`}>证据 {id}</a>)}</div>
+              <details className="reasoning"><summary>完整理由</summary><p>{member.reasoning}</p></details>
+              <p className="member-meta">委员信心 {member.confidence}%{!!member.challenged_assumption_ids.length && <> · 质疑假设：{member.challenged_assumption_ids.map(id => assumptionName(decision, id)).join("、")}</>}</p>
+              <Citations ids={member.evidence_ids} />
             </div> : completed ? <p className="council-conclusion">{event.summary}</p> : <p className="seat-status">{state === "failed" ? "审查中断" : "思考中"}</p>}
           </div>
         </article>;

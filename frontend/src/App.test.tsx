@@ -96,7 +96,8 @@ describe("decision workspace", () => {
   it("creates a labelled demo and requires clarification confirmation before research", async () => {
     const api = fakeApi();
     render(<App api={api as any} />);
-    fireEvent.change(screen.getByLabelText("经营决策问题"), {
+    fireEvent.click(screen.getByRole("button", { name: "填入 AI 售后客服示例" }));
+  fireEvent.change(screen.getByLabelText("经营决策问题"), {
       target: { value: input.question },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建并开始研究" }));
@@ -317,7 +318,7 @@ describe("decision workspace", () => {
     render(<App api={fakeApi() as any} />);
 
     const window = await screen.findByLabelText("时间窗口");
-    expect(window).toHaveValue("14");
+    expect(window).toHaveValue("30");
     expect(window).not.toHaveAttribute("readonly");
     expect(screen.getAllByRole("option")).toHaveLength(6);
   });
@@ -363,6 +364,7 @@ it("polls background snapshots and stops at the human confirmation gate", async 
   });
   render(<App api={api as any} />);
   await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "填入 AI 售后客服示例" }));
   fireEvent.change(screen.getByLabelText("经营决策问题"), {
     target: { value: input.question },
   });
@@ -406,6 +408,7 @@ it("does not replace a newly created ledger row with a slow startup response", a
       }),
   );
   render(<App api={api as any} />);
+  fireEvent.click(screen.getByRole("button", { name: "填入 AI 售后客服示例" }));
   fireEvent.change(screen.getByLabelText("经营决策问题"), {
     target: { value: input.question },
   });

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,9 +27,14 @@ const liveEvidence: Evidence = {
 
 afterEach(cleanup);
 
+function expandAll() {
+  for (const row of screen.queryAllByRole("button", { expanded: false })) fireEvent.click(row);
+}
+
 describe("EvidencePanel provenance labels", () => {
   it("labels every demo card as synthetic placeholder material", () => {
     render(<EvidencePanel evidence={[demoEvidence]} />);
+    expandAll();
 
     expect(screen.getByText("当前展示合成演示资料，未经联网核验。")).toBeVisible();
     expect(screen.getByText(/演示可靠度：/)).toBeVisible();
@@ -40,6 +45,7 @@ describe("EvidencePanel provenance labels", () => {
 
   it("labels a real card as an unverified online source", () => {
     render(<EvidencePanel evidence={[liveEvidence]} />);
+    expandAll();
 
     expect(
       screen.getByText("包含联网来源摘要；它们是第三方信息，尚未独立核验。"),
@@ -53,6 +59,7 @@ describe("EvidencePanel provenance labels", () => {
 
   it("keeps individual provenance labels when sources are mixed", () => {
     render(<EvidencePanel evidence={[demoEvidence, liveEvidence]} />);
+    expandAll();
 
     const demoCard = screen.getByText(demoEvidence.title).closest("article");
     const liveCard = screen.getByText(liveEvidence.title).closest("article");
@@ -66,6 +73,7 @@ describe("EvidencePanel provenance labels", () => {
 
   it("renders an empty state without making a provenance claim", () => {
     render(<EvidencePanel evidence={[]} />);
+    expandAll();
 
     expect(
       screen.getByText("确认条件后，这里会展示支持与反对意见的依据。"),
@@ -84,6 +92,7 @@ describe("EvidencePanel provenance labels", () => {
     const { container } = render(
       <EvidencePanel evidence={[unsafeEvidence]} />,
     );
+    expandAll();
 
     expect(screen.getByText(unsafeEvidence.title)).toBeVisible();
     expect(screen.getByText(unsafeEvidence.summary)).toBeVisible();
@@ -92,5 +101,22 @@ describe("EvidencePanel provenance labels", () => {
     expect(
       screen.getByText(`联网来源 · ${unsafeEvidence.source_url}`),
     ).toBeVisible();
+  });
+});
+
+describe("EvidencePanel navigation", () => {
+  it("numbers cards by their real id so citations match, and starts collapsed", () => {
+    render(<EvidencePanel evidence={[{ ...liveEvidence, id: "13" }, { ...liveEvidence, id: "14", stance: "opposes" }]} />);
+    expect(screen.getByText("#13")).toBeVisible();
+    expect(screen.getByText("#14")).toBeVisible();
+    expect(screen.getByText("2 条")).toBeVisible();
+    expect(screen.getAllByText(liveEvidence.summary)[0]).not.toBeVisible();
+  });
+
+  it("filters by stance", () => {
+    render(<EvidencePanel evidence={[{ ...liveEvidence, id: "1" }, { ...liveEvidence, id: "2", title: "反对材料", stance: "opposes" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "反对 1" }));
+    expect(screen.getByText("反对材料")).toBeVisible();
+    expect(screen.queryByText("#1")).not.toBeInTheDocument();
   });
 });
