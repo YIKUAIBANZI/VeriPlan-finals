@@ -2,6 +2,7 @@
 from threading import Event, Thread
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from app.providers.base import ProviderError
@@ -499,6 +500,7 @@ def test_invalid_or_duplicate_planning_queries_fail_before_search(tmp_path, quer
 def test_http_duplicate_run_is_rejected_while_background_provider_is_blocked(tmp_path):
     app = create_app(tmp_path / 'db')
     client = TestClient(app)
+    login(client)
     decision_id = client.post('/api/decisions', json=payload()).json()['id']
     url = '/api/decisions/' + decision_id
     entered, release = Event(), Event()
@@ -525,6 +527,7 @@ def test_http_duplicate_run_is_rejected_while_background_provider_is_blocked(tmp
 def test_http_retry_returns_202_then_polling_reads_completion(tmp_path):
     app = create_app(tmp_path / 'db')
     client = TestClient(app)
+    login(client)
     decision_id = client.post('/api/decisions', json=payload()).json()['id']
     url = '/api/decisions/' + decision_id
     original = app.state.workflow._run_stage
@@ -553,6 +556,8 @@ def test_startup_recovers_queued_runs_but_preserves_human_gates(tmp_path):
     engine.run(waiting.id)
     confirmed_id = ready(repository, engine)
     with TestClient(create_app(path)) as client:
+        login(client)
+        repository.claim_legacy('test_user')
         assert client.get('/api/decisions/' + queued.id).json()['failure']['code'] == 'interrupted'
         assert client.get('/api/decisions/' + waiting.id).json()['status'] == 'awaiting_confirmation'
         assert client.get('/api/decisions/' + confirmed_id).json()['status'] == 'planning'

@@ -7,6 +7,7 @@ import {
   type DecisionInput,
   type Health,
   type ReviewAction,
+  type User,
 } from "./types";
 import { CalibrationPanel } from "./components/CalibrationPanel";
 import { OutcomesPanel } from "./components/OutcomesPanel";
@@ -22,7 +23,15 @@ import { ResearchQueries } from "./components/ResearchQueries";
 import { BusinessBaselinePanel } from "./components/BusinessBaseline";
 import "./styles.css";
 
-export function App({ api = defaultApi }: { api?: DecisionApi }) {
+export function App({
+  api = defaultApi,
+  user,
+  onLogout,
+}: {
+  api?: DecisionApi;
+  user?: User;
+  onLogout?: () => void;
+}) {
   const [page, setPage] = useState<"decision" | "calibration">("decision");
   const [decision, setDecision] = useState<Decision | null>(null);
   const [items, setItems] = useState<Decision[]>([]);
@@ -208,14 +217,22 @@ export function App({ api = defaultApi }: { api?: DecisionApi }) {
       <div className="main-shell">
         <header className="topbar">
           <span className="topbar-title">{page === "calibration" ? "偏差画像" : decision ? "决策工作台" : "新建决策"}</span>
-          <span className="mode-badge" data-live={liveUnlocked || undefined}>
-            <i aria-hidden="true" />
-            {liveUnlocked
-              ? "真实联网模式"
-              : health?.mode === "live"
-                ? "真实模式未解锁"
-                : "演示数据模式"}
-          </span>
+          <div className="topbar-right">
+            <span className="mode-badge" data-live={liveUnlocked || undefined}>
+              <i aria-hidden="true" />
+              {liveUnlocked
+                ? "真实联网模式"
+                : health?.mode === "live"
+                  ? "真实模式未解锁"
+                  : "演示数据模式"}
+            </span>
+            {user && (
+              <span className="account">
+                <span className="account-name" title={user.username}>{user.username}</span>
+                {onLogout && <button className="link-button" onClick={onLogout}>退出</button>}
+              </span>
+            )}
+          </div>
         </header>
         <main id="workspace">
           {error && (

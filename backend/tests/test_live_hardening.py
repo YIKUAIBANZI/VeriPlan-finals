@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.config import Settings
 from app.main import create_app
@@ -43,6 +44,7 @@ def test_rewritten_constraints_never_reach_snapshot_or_export(tmp_path):
             return output
 
     with TestClient(create_app(tmp_path / 'db', settings=Settings(app_mode='live', enable_live_workflow=True, deepseek_api_key='fake', tavily_api_key='fake'), model_provider=RewritingModel(), search_provider=DemoSearchProvider())) as client:
+        login(client)
         created = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + created['id']
         client.post(url + '/run')

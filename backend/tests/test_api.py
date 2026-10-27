@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from app.repository import DecisionRepository
@@ -12,6 +13,7 @@ def payload() -> dict:
 
 def test_api_requires_confirmation_before_demo_workflow_can_finish(tmp_path):
     client = TestClient(create_app(tmp_path / "veriplan.db"))
+    login(client)
     assert client.get('/api/health').json()['mode'] == 'demo'
     created = client.post("/api/decisions", json=payload()).json()
     url = f"/api/decisions/{created['id']}"
@@ -30,6 +32,7 @@ def test_api_requires_confirmation_before_demo_workflow_can_finish(tmp_path):
 
 def test_create_normalizes_supported_window_and_rejects_other_windows(tmp_path):
     client = TestClient(create_app(tmp_path / "window.db"))
+    login(client)
     supported = payload()
     supported["time_window"] = "14 days"
     created = client.post("/api/decisions", json=supported)
@@ -48,10 +51,11 @@ def test_create_normalizes_supported_window_and_rejects_other_windows(tmp_path):
 
 def test_missing_decisions_and_untrusted_create_fields(tmp_path):
     client = TestClient(create_app(tmp_path / 'db'))
+    login(client)
     assert client.get('/api/decisions/missing').status_code == 404
     for operation in ['run','retry','confirm','review']:
         assert client.post('/api/decisions/missing/' + operation, json={'action':'accepted'}).status_code == 404
-    for key in ['status','prompt','file_path','api_key']:
+    for key in ['status','prompt','file_path','api_key','owner_id']:
         assert client.post('/api/decisions', json=payload() | {key:'x'}).status_code == 422
 
 
@@ -59,6 +63,7 @@ def test_live_mode_is_unavailable_and_secrets_are_never_returned(tmp_path, monke
     monkeypatch.setenv('APP_MODE', 'live')
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'private-test-secret')
     client = TestClient(create_app(tmp_path / 'db'))
+    login(client)
     health = client.get('/api/health')
     assert health.json()['mode'] == 'live'
     assert health.json()['live_available'] is False
@@ -68,6 +73,7 @@ def test_live_mode_is_unavailable_and_secrets_are_never_returned(tmp_path, monke
 
 def test_markdown_export_requires_a_delivered_memo_and_sets_download_headers(tmp_path):
     client = TestClient(create_app(tmp_path / "export.db"))
+    login(client)
     assert client.get("/api/decisions/missing/export.md").status_code == 404
 
     created = client.post("/api/decisions", json=payload()).json()
@@ -99,6 +105,9 @@ def test_markdown_export_is_read_only_across_application_modes(tmp_path):
     repository._engine.dispose()
 
     demo_client = TestClient(create_app(path))
+    login(demo_client)
+    # This fixture was created directly through the repository before accounts existed.
+    demo_client.app.state.repository.claim_legacy('test_user')
     response = demo_client.get(f"/api/decisions/{decision.id}/export.md")
 
     assert response.status_code == 200

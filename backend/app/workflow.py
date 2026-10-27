@@ -206,6 +206,7 @@ class WorkflowEngine:
             return self._run_researching(snapshot)
         context = snapshot.model_dump(mode='json')
         if stage == 'challenging':
+            owner_id = self._repository.owner_of(snapshot.id)
             if self._settings.skeptic_input == 'independent':
                 context = {key: context[key] for key in (
                     'question', 'time_window', 'budget_limit', 'primary_goal', 'scenario',
@@ -217,10 +218,10 @@ class WorkflowEngine:
             if snapshot.mode == 'demo':
                 from app.providers.demo import ensure_demo_calibration_seeds
                 with self._lock:
-                    ensure_demo_calibration_seeds(self._repository)
+                    ensure_demo_calibration_seeds(self._repository, owner_id=owner_id)
             from app.calibration import calibration_profile, calibration_warnings
             context['calibration_warnings'] = calibration_warnings(
-                calibration_profile(self._repository.list(), mode=snapshot.mode), snapshot.assumptions,
+                calibration_profile(self._repository.list(owner_id=owner_id), mode=snapshot.mode), snapshot.assumptions,
             )
         if stage == 'analyzing':
             return self._run_council(snapshot, context)

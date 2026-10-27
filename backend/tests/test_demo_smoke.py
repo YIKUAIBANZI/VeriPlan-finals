@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from tests.helpers import login
 from app.main import create_app
 from tests.test_api import payload
 
@@ -6,6 +7,7 @@ from tests.test_api import payload
 def test_demo_fixture_delivers_skeptic_and_14_day_actions(tmp_path, monkeypatch):
     monkeypatch.setenv('APP_MODE', 'demo')
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         decision = client.post('/api/decisions', json=payload()).json()
         url = '/api/decisions/' + decision['id']
         assert client.post(url + '/run').status_code == 202

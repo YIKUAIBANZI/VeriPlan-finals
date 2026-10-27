@@ -2,9 +2,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Response
 
+from app.auth import AuthService, create_auth_router, require_user
 from app.config import Settings
+from app.models import UserRecord
 from app.providers.base import ModelProvider, SearchProvider
 from app.providers.deepseek import DeepSeekModelProvider
 from app.providers.anthropic_provider import AnthropicModelProvider
@@ -131,6 +133,10 @@ def create_app(
     app.state.repository = repository
     app.state.workflow = workflow
     app.state.live_available = live_available
+    auth = AuthService(repository, settings)
+    app.state.auth = auth
+    app.include_router(create_auth_router(auth))
+    protected = APIRouter(dependencies=[Depends(require_user)])
 
     def require_mutations_available():
         if settings.app_mode == 'demo':
@@ -147,11 +153,15 @@ def create_app(
         try:
             return operation(*args, **kwargs)
         except KeyError as error:
-            raise HTTPException(status_code=404, detail='Decision not found') from error
+            raise HTTPException(status_code=404, detail='决策不存在') from error
         except InvalidInput as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    def require_owned_decision(decision_id: str, user: UserRecord = Depends(require_user)):
+        if invoke(repository.owner_of, decision_id) != user.id:
+            raise HTTPException(status_code=404, detail='决策不存在')
 
     @app.get('/api/health')
     def health():
@@ -162,6 +172,7 @@ def create_app(
             'status': 'ok' if settings.app_mode == 'demo' or live_available else 'unavailable',
             'mode': settings.app_mode,
             'database': 'ok',
+            'registration_requires_invite': auth.registration_requires_invite,
             'live_workflow_enabled': settings.enable_live_workflow,
             'live_model_configured': live_model_configured,
             'live_model_adapter_available': True,
@@ -175,15 +186,15 @@ def create_app(
             'live_available': live_available,
         }
 
-    @app.get('/api/decisions')
-    def list_decisions():
-        return repository.list()
+    @protected.get('/api/decisions')
+    def list_decisions(user: UserRecord = Depends(require_user)):
+        return repository.list(owner_id=user.id)
 
-    @app.get('/api/decisions/{decision_id}')
+    @protected.get('/api/decisions/{decision_id}', dependencies=[Depends(require_owned_decision)])
     def get_decision(decision_id: str):
         return invoke(repository.get, decision_id)
 
-    @app.get('/api/decisions/{decision_id}/export.md')
+    @protected.get('/api/decisions/{decision_id}/export.md', dependencies=[Depends(require_owned_decision)])
     def export_decision_markdown(decision_id: str):
         snapshot = invoke(repository.get, decision_id)
         if snapshot.memo is None:
@@ -198,32 +209,32 @@ def create_app(
             },
         )
 
-    @app.post('/api/decisions', status_code=201)
-    def create_decision(payload: DecisionCreate):
+    @protected.post('/api/decisions', status_code=201)
+    def create_decision(payload: DecisionCreate, user: UserRecord = Depends(require_user)):
         require_mutations_available()
-        return repository.create(payload, mode=settings.app_mode)
+        return repository.create(payload, mode=settings.app_mode, owner_id=user.id)
 
-    @app.post('/api/decisions/{decision_id}/run', status_code=202)
+    @protected.post('/api/decisions/{decision_id}/run', status_code=202, dependencies=[Depends(require_owned_decision)])
     def run_decision(decision_id: str, background_tasks: BackgroundTasks):
         require_mutations_available()
         snapshot = invoke(workflow.prepare_run, decision_id)
         background_tasks.add_task(workflow.run_prepared, decision_id)
         return snapshot
 
-    @app.post('/api/decisions/{decision_id}/retry', status_code=202)
+    @protected.post('/api/decisions/{decision_id}/retry', status_code=202, dependencies=[Depends(require_owned_decision)])
     def retry_decision(decision_id: str, background_tasks: BackgroundTasks):
         require_mutations_available()
         snapshot = invoke(workflow.prepare_run, decision_id, retry=True)
         background_tasks.add_task(workflow.run_prepared, decision_id)
         return snapshot
 
-    @app.post('/api/decisions/{decision_id}/confirm')
+    @protected.post('/api/decisions/{decision_id}/confirm', dependencies=[Depends(require_owned_decision)])
     def confirm_decision(decision_id: str):
         require_mutations_available()
         invoke(workflow.confirm_clarification, decision_id)
         return repository.get(decision_id)
 
-    @app.post('/api/decisions/{decision_id}/review')
+    @protected.post('/api/decisions/{decision_id}/review', dependencies=[Depends(require_owned_decision)])
     def review_decision(decision_id: str, payload: ReviewRequest):
         require_mutations_available()
         invoke(
@@ -234,28 +245,29 @@ def create_app(
         )
         return repository.get(decision_id)
 
-    @app.post('/api/decisions/{decision_id}/objection-labels')
+    @protected.post('/api/decisions/{decision_id}/objection-labels', dependencies=[Depends(require_owned_decision)])
     def label_objections(decision_id: str, payload: ObjectionLabelsRequest):
         require_mutations_available()
         invoke(repository.save_objection_labels, decision_id, payload.labels, mode=settings.app_mode)
         return repository.get(decision_id)
 
-    @app.post('/api/decisions/{decision_id}/outcomes')
+    @protected.post('/api/decisions/{decision_id}/outcomes', dependencies=[Depends(require_owned_decision)])
     def record_outcomes(decision_id: str, payload: OutcomeRequest):
         require_mutations_available()
         invoke(repository.save_outcome, decision_id, payload, mode=settings.app_mode)
         return repository.get(decision_id)
 
-    @app.post('/api/retrospectives', status_code=201)
-    def create_retrospective(payload: RetrospectiveCreate):
+    @protected.post('/api/retrospectives', status_code=201)
+    def create_retrospective(payload: RetrospectiveCreate, user: UserRecord = Depends(require_user)):
         require_mutations_available()
-        return invoke(repository.create_retrospective, payload, mode=settings.app_mode)
+        return invoke(repository.create_retrospective, payload, mode=settings.app_mode, owner_id=user.id)
 
-    @app.get('/api/calibration')
-    def get_calibration():
+    @protected.get('/api/calibration')
+    def get_calibration(user: UserRecord = Depends(require_user)):
         from app.calibration import calibration_profile
-        return calibration_profile(repository.list(), mode=settings.app_mode)
+        return calibration_profile(repository.list(owner_id=user.id), mode=settings.app_mode)
 
+    app.include_router(protected)
     return app
 
 

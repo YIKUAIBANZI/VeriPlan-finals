@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, func, inspect, select, text, update
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 
 from app.models import (
@@ -15,6 +15,7 @@ from app.models import (
     EvidenceRecord,
     ProviderCallRecord,
     ResearchQueryRecord,
+    UserRecord,
     WorkflowEventRecord,
 )
 from app.baseline import analyze_business_baseline
@@ -34,6 +35,9 @@ from app.schemas import (
 )
 from app.state_machine import transition
 from app.providers.base import ProviderCallContext
+
+
+_ALL_OWNERS = object()
 
 
 class DecisionRepository:
@@ -70,6 +74,7 @@ class DecisionRepository:
                 "ALTER TABLE decisions ADD COLUMN business_baseline_json TEXT NOT NULL DEFAULT '{}'"
             )
         additions = {
+            "owner_id": "INTEGER",
             "scenario": "VARCHAR(32) NOT NULL DEFAULT 'ai_tool_pilot'",
             "horizon_days": "INTEGER NOT NULL DEFAULT 14",
             "known_risks_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -99,10 +104,12 @@ class DecisionRepository:
         payload: DecisionCreate,
         *,
         mode: Literal["demo", "live"] = "demo",
+        owner_id: int | None = None,
     ) -> DecisionSnapshot:
         with self._sessions.begin() as session:
             record = DecisionRecord(
                 id=str(uuid4()),
+                owner_id=owner_id,
                 **payload.model_dump(exclude={"business_baseline", "known_risks", "assumptions"}),
                 known_risks_json=json.dumps(payload.known_risks),
                 assumptions_json=json.dumps([
@@ -425,13 +432,14 @@ class DecisionRepository:
             record.outcomes_json = json.dumps(outcomes)
 
     def create_retrospective(self, payload: RetrospectiveCreate, *, mode: str = "demo",
-                             seed_id: str | None = None) -> DecisionSnapshot:
+                             seed_id: str | None = None, owner_id: int | None = None) -> DecisionSnapshot:
         from app.calibration import calculate_actuals
         assumptions = [Assumption(**item.model_dump(), id=f'A{index}') for index, item in enumerate(payload.assumptions, 1)]
         actuals = calculate_actuals(assumptions, payload.actuals)
         with self._sessions.begin() as session:
             record = DecisionRecord(
                 id=seed_id or str(uuid4()), question=payload.question, scenario=payload.scenario,
+                owner_id=owner_id,
                 time_window='90 天', horizon_days=90, budget_limit=0, primary_goal='回溯校准',
                 business_baseline_json='{}', known_risks_json='[]',
                 assumptions_json=json.dumps([item.model_dump() for item in assumptions]),
@@ -447,10 +455,29 @@ class DecisionRepository:
             session.flush()
             return self._snapshot(record)
 
-    def list(self) -> list[DecisionSnapshot]:
+    def list(self, *, owner_id=_ALL_OWNERS) -> list[DecisionSnapshot]:
+        # Omission is reserved for internal recovery; explicit None selects legacy rows only.
         with self._sessions() as session:
-            records = session.scalars(select(DecisionRecord).order_by(DecisionRecord.created_at.desc()).options(selectinload(DecisionRecord.evidence), selectinload(DecisionRecord.events), selectinload(DecisionRecord.research_queries))).all()
+            query = select(DecisionRecord).order_by(DecisionRecord.created_at.desc()).options(selectinload(DecisionRecord.evidence), selectinload(DecisionRecord.events), selectinload(DecisionRecord.research_queries))
+            if owner_id is not _ALL_OWNERS:
+                query = query.where(DecisionRecord.owner_id == owner_id)
+            records = session.scalars(query).all()
             return [self._snapshot(record) for record in records]
+
+    def owner_of(self, decision_id: str) -> int | None:
+        with self._sessions() as session:
+            row = session.execute(select(DecisionRecord.owner_id).where(DecisionRecord.id == decision_id)).one_or_none()
+            if row is None:
+                raise KeyError(decision_id)
+            return row.owner_id
+
+    def claim_legacy(self, username: str) -> int:
+        with self._sessions.begin() as session:
+            user = session.scalar(select(UserRecord).where(func.lower(UserRecord.username) == username.strip().lower()))
+            if user is None:
+                raise ValueError("用户不存在")
+            result = session.execute(update(DecisionRecord).where(DecisionRecord.owner_id.is_(None)).values(owner_id=user.id))
+            return result.rowcount
 
     def mark_failed(self, decision_id: str, stage: str, code: str = "stage_failed", *, incomplete_reason: str | None = None) -> None:
         with self._sessions.begin() as session:

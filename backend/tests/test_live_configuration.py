@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 from pydantic import ValidationError
 
 from app.config import Settings
@@ -83,6 +84,7 @@ def test_live_unlock_requires_flag_and_both_provider_keys(
     )
 
     with TestClient(app) as client:
+        login(client)
         health = client.get("/api/health").json()
         response = client.post("/api/decisions", json=payload())
 
@@ -90,6 +92,7 @@ def test_live_unlock_requires_flag_and_both_provider_keys(
         "status": "ok" if unlocked else "unavailable",
         "mode": "live",
         "database": "ok",
+        "registration_requires_invite": False,
         "live_workflow_enabled": enabled,
         "live_model_configured": with_model_key,
         "live_model_adapter_available": True,
@@ -112,12 +115,14 @@ def test_live_unlock_requires_flag_and_both_provider_keys(
 
 def test_demo_health_remains_available_without_live_capabilities(tmp_path):
     with TestClient(create_app(tmp_path / "db", settings=Settings())) as client:
+        login(client)
         health = client.get("/api/health").json()
 
     assert health == {
         "status": "ok",
         "mode": "demo",
         "database": "ok",
+        "registration_requires_invite": False,
         "live_workflow_enabled": False,
         "live_model_configured": False,
         "live_model_adapter_available": True,
@@ -138,6 +143,7 @@ def test_blank_live_keys_are_treated_as_unconfigured_without_breaking_startup(
     )
 
     with TestClient(create_app(tmp_path / "db", settings=settings)) as client:
+        login(client)
         health = client.get("/api/health").json()
 
     assert health["live_model_configured"] is False
@@ -155,6 +161,7 @@ def test_live_never_executes_with_one_real_and_one_demo_provider(tmp_path):
     app = create_app(tmp_path / "db", settings=settings)
 
     with TestClient(app) as client:
+        login(client)
         assert client.post("/api/decisions", json=payload()).status_code == 503
 
     assert app.state.live_available is False

@@ -119,14 +119,17 @@ class DemoModelProvider:
         raise ValueError('Unsupported demo stage')
 
 
-def ensure_demo_calibration_seeds(repository):
+def ensure_demo_calibration_seeds(repository, *, owner_id=None):
     """Seed only an empty demo calibration history; never add samples to Live."""
     from app.calibration import calibration_profile
     from app.schemas import RetrospectiveCreate
-    if calibration_profile(repository.list(), mode='demo')['samples']:
+    from uuid import UUID, uuid5
+    if calibration_profile(repository.list(owner_id=owner_id), mode='demo')['samples']:
         return
     for index in (1, 2):
         seed_id = f'00000000-0000-0000-0000-00000000000{index}'
+        if owner_id is not None:
+            seed_id = str(uuid5(UUID(seed_id), str(owner_id)))
         try:
             repository.get(seed_id)
             continue
@@ -140,4 +143,4 @@ def ensure_demo_calibration_seeds(repository):
                               unit='合成单位', confidence=80) for category in categories],
             actuals=[dict(assumption_id=f'A{i}', actual_value=140 if category in {'cost', 'time'} else 60)
                      for i, category in enumerate(categories, 1)],
-        ), mode='demo', seed_id=seed_id)
+        ), mode='demo', seed_id=seed_id, owner_id=owner_id)

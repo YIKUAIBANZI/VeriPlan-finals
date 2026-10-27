@@ -4,6 +4,7 @@ from collections import Counter
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 from pydantic import ValidationError
 
 from app.config import Settings
@@ -42,6 +43,7 @@ def test_each_mapped_profile_key_is_required_even_with_injected_fakes(tmp_path, 
         openai_compat_api_key='private-default', tavily_api_key='private-search',
         council_model_map=f'expert={profile}', **{profile + '_api_key': key})
     with TestClient(create_app(tmp_path / 'db', settings=settings, model_provider=DemoModelProvider(), search_provider=DemoSearchProvider())) as client:
+        login(client)
         health = client.get('/api/health').json()
         assert not health['live_available'] and not health['live_model_configured']
         response = client.post('/api/decisions', json=general_payload())
@@ -75,6 +77,7 @@ def test_profiles_use_distinct_requests_and_code_owned_labels_and_ledger(tmp_pat
     settings = live_settings(council_model_map='opportunity=bailian:qwen3.8-flash,cfo=deepseek,risk=minimax:MiniMax-M2.5-highspeed,expert=kimi:kimi-k2.5')
     app = create_app(tmp_path / 'db', settings=settings, search_provider=DemoSearchProvider())
     with TestClient(app) as client:
+        login(client)
         decision = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + decision['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
@@ -213,6 +216,7 @@ def test_demo_ignores_live_map_and_creates_no_real_adapters(tmp_path, monkeypatc
     monkeypatch.setattr(main_module, 'DeepSeekModelProvider', forbidden)
     with TestClient(create_app(tmp_path / 'db', settings=Settings(app_mode='demo',
         council_model_map='expert=kimi', kimi_api_key='unused'))) as client:
+        login(client)
         row = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + row['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
@@ -290,6 +294,7 @@ def test_live_model_selected_expert_survives_planning_and_four_seat_validation(t
     mock_factories(monkeypatch, handler)
     app = create_app(tmp_path / 'db', settings=live_settings(council_model_map='expert=kimi'), search_provider=DemoSearchProvider())
     with TestClient(app) as client:
+        login(client)
         row = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + row['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')

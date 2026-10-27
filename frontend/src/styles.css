@@ -540,3 +540,52 @@ thead th { color: var(--smoke); font-size: 12px; }
 .claims-block .claims { margin-top: 10px; }
 .claims-block + .research-gap { border-top: var(--hair); padding-top: 4px; }
 @media print { .claims-block .claims { display: block !important; } }
+
+/* ---------- account / sign-in ---------- */
+.topbar-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.account { display: inline-flex; align-items: center; gap: 10px; padding-left: 14px; border-left: var(--hair); min-width: 0; }
+.account-name { color: var(--graphite); max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-button { border: 0; background: transparent; padding: 0; font-size: inherit; font-weight: 500; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--ash); border-radius: 4px; }
+.link-button:hover:not(:disabled) { background: transparent; text-decoration-color: var(--ink); }
+
+.auth-loading { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 14px; color: var(--smoke); font-size: 14px; }
+.auth-shell { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+.auth-intro { padding: 44px 64px; background: var(--taupe); border-right: var(--hair); display: flex; flex-direction: column; }
+.auth-intro .brand { padding: 0; margin-bottom: auto; }
+.auth-intro .display { margin-top: 72px; font-size: 52px; }
+.auth-intro .lede { max-width: 30em; margin-bottom: 40px; text-wrap: pretty; }
+.discipline { list-style: none; padding: 0; margin: 0 0 auto; max-width: 30em; border-top: var(--hair); }
+.discipline li { display: flex; gap: 18px; align-items: baseline; padding: 11px 0; border-bottom: var(--hair); margin: 0; }
+.discipline-no { font-family: var(--mono); font-size: 12px; color: var(--ash); }
+.discipline strong { font-weight: 500; font-size: 15px; margin-right: 12px; }
+.discipline small { color: var(--smoke); font-size: 13px; }
+.auth-panel { display: grid; place-items: start center; padding: max(44px, calc(50vh - 220px)) 24px 44px; }
+.auth-card { width: 100%; max-width: 380px; }
+.auth-card-brand { display: none; }
+.auth-tabs { display: inline-flex; padding: 3px; border: var(--hair); border-radius: 9999px; background: var(--taupe); margin-bottom: 36px; }
+.auth-tabs button { border: 0; background: transparent; padding: 5px 18px; font-size: 13px; color: var(--smoke); }
+.auth-tabs button[aria-selected="true"] { background: var(--eggshell); color: var(--ink); box-shadow: var(--shadow); }
+.auth-card h2 { font-size: 30px; font-weight: 300; letter-spacing: -0.015em; line-height: 1.2; }
+.auth-sub { color: var(--smoke); margin: 8px 0 28px; font-size: 14px; }
+.auth-card form { display: flex; flex-direction: column; gap: 16px; }
+.auth-card label span { display: block; font-size: 13px; color: var(--graphite); margin-bottom: 6px; }
+.auth-card button.primary { margin-top: 8px; width: 100%; padding: 11px 20px; }
+.auth-error { font-size: 13px; color: var(--ember); }
+.auth-switch { margin-top: 22px; font-size: 13px; color: var(--smoke); text-align: center; }
+.auth-switch .link-button { margin-left: 6px; font-size: 13px; }
+@media (max-width: 860px) {
+  .auth-shell { grid-template-columns: 1fr; }
+  .auth-panel { order: -1; }
+  .auth-card-brand { display: flex; padding: 0; margin-bottom: 28px; }
+  .auth-intro { padding: 32px 16px 40px; border-right: 0; border-top: var(--hair); }
+  .auth-intro .brand { display: none; }
+  .auth-intro .display { margin-top: 0; font-size: 30px; }
+  .auth-intro .lede { margin-bottom: 24px; }
+  .discipline small { display: block; }
+  .auth-panel { padding: 32px 16px 40px; place-items: start center; }
+  .auth-tabs { margin-bottom: 24px; }
+}
+@media (max-width: 760px) {
+  .account-name { max-width: 6em; }
+}
+@media print { .account { display: none !important; } }

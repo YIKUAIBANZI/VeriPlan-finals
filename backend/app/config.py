@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_mode: Literal['demo', 'live'] = 'demo'
     enable_live_workflow: bool = False
     database_url: str = 'sqlite:///veriplan.db'
+    session_cookie_secure: bool = False
+    registration_invite_code: SecretStr | None = None
     model_provider: Literal['deepseek', 'openai_compat', 'anthropic'] = 'deepseek'
     openai_compat_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
     openai_compat_api_key: SecretStr | None = None

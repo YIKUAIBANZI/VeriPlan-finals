@@ -243,6 +243,12 @@ export interface Health {
   live_search_adapter_available?: boolean;
   live_search_available?: boolean;
   live_available: boolean;
+  registration_requires_invite?: boolean;
+}
+export interface User {
+  id: number;
+  username: string;
+  created_at: string;
 }
 export const statusLabels: Record<Status, string> = {
   draft: "待开始",

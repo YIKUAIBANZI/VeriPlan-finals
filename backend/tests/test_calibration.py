@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from app.config import Settings
@@ -17,6 +18,7 @@ def retrospective_payload(actual=60, category='revenue', predicted=100, confiden
 
 def test_retrospective_is_terminal_and_profile_computes_numbers(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         for actual in (60, 80):
             response = client.post('/api/retrospectives', json=retrospective_payload(actual))
             assert response.status_code == 201
@@ -39,6 +41,7 @@ def test_retrospective_is_terminal_and_profile_computes_numbers(tmp_path):
 def test_profile_skips_zero_and_isolates_modes(tmp_path):
     path = tmp_path / 'db'
     with TestClient(create_app(path)) as client:
+        login(client)
         response = client.post('/api/retrospectives', json=retrospective_payload(predicted=0))
         assert response.status_code == 201
         actual = response.json()['outcomes'][0]['actuals'][0]
@@ -47,12 +50,14 @@ def test_profile_skips_zero_and_isolates_modes(tmp_path):
         assert profile['categories'] == []
         assert len(profile['samples']) == 1
     with TestClient(create_app(path, settings=Settings(app_mode='live'))) as client:
+        login(client)
         assert client.get('/api/calibration').json()['samples'] == []
         assert client.post('/api/retrospectives', json=retrospective_payload()).status_code == 503
 
 
 def test_outcomes_gate_overwrite_validation_and_warning_injection(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         for _ in range(2):
             assert client.post('/api/retrospectives', json=retrospective_payload()).status_code == 201
         decision = client.post('/api/decisions', json=general_payload()).json()
@@ -99,6 +104,7 @@ def test_warning_directions_and_thresholds(tmp_path, category, actual, word):
 
 def test_retrospective_invalid_actual_does_not_create_partial_record(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         data = retrospective_payload()
         data['actuals'][0]['assumption_id'] = 'A2'
         assert client.post('/api/retrospectives', json=data).status_code == 422
@@ -116,6 +122,7 @@ def test_signed_error_and_hit_boundary_are_computed_without_rounding_bias():
 def test_cross_mode_outcomes_and_labels_are_read_only(tmp_path):
     path = tmp_path / 'db'
     with TestClient(create_app(path)) as client:
+        login(client)
         decision = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + decision['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
@@ -124,6 +131,7 @@ def test_cross_mode_outcomes_and_labels_are_read_only(tmp_path):
     settings = Settings(app_mode='live', enable_live_workflow=True,
                         deepseek_api_key='fixture', tavily_api_key='fixture')
     with TestClient(create_app(path, settings=settings, model_provider=DemoModelProvider(), search_provider=DemoSearchProvider())) as client:
+        login(client)
         before = client.get(url).json()
         assert client.post(url + '/objection-labels', json={'labels': {'O1': 'adopted'}}).status_code == 409
         assert client.post(url + '/outcomes', json={'checkpoint': 'custom', 'actuals': [{'assumption_id': 'A1', 'actual_value': 1}]}).status_code == 409
@@ -132,6 +140,7 @@ def test_cross_mode_outcomes_and_labels_are_read_only(tmp_path):
 
 def test_extreme_but_finite_samples_do_not_overflow_category_mean(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         for _ in range(2):
             assert client.post('/api/retrospectives', json=retrospective_payload(actual=1e306, predicted=1)).status_code == 201
         profile = client.get('/api/calibration').json()

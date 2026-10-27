@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from app.providers.contracts import validate_stage_output
@@ -57,6 +58,7 @@ def test_blockers_cannot_go_and_conditions_cover_each_blocker(context):
 
 def test_label_endpoint_requires_review_gate_existing_ids_and_overwrites(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         created = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + created['id']
         assert client.post(url + '/objection-labels', json={'labels': {'O1': 'adopted'}}).status_code == 409

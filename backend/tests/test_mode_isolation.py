@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.config import Settings
 from app.main import create_app
@@ -156,6 +157,7 @@ def test_http_review_rejects_a_decision_from_another_mode(tmp_path):
     database = tmp_path / "http.db"
     demo_app = create_app(database)
     with TestClient(demo_app) as demo_client:
+        login(demo_client)
         decision_id = demo_client.post(
             "/api/decisions", json=sample_decision().model_dump(mode="json")
         ).json()["id"]
@@ -178,6 +180,7 @@ def test_http_review_rejects_a_decision_from_another_mode(tmp_path):
         search_provider=DemoSearchProvider(),
     )
     with TestClient(live_app) as live_client:
+        login(live_client)
         response = live_client.post(
             f"/api/decisions/{decision_id}/review",
             json={"action": "accepted", "note": "must not persist"},

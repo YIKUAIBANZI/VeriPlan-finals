@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from tests.test_finals_scenarios import general_payload
@@ -9,6 +10,7 @@ from tests.test_finals_scenarios import general_payload
 def test_all_scenarios_have_disagreement_blocker_novel_risk_and_synthetic_calibration(tmp_path, scenario):
     path = tmp_path / 'db'
     with TestClient(create_app(path)) as client:
+        login(client)
         created = client.post('/api/decisions', json=general_payload(scenario=scenario, horizon_days=30)).json()
         url = '/api/decisions/' + created['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
@@ -29,4 +31,5 @@ def test_all_scenarios_have_disagreement_blocker_novel_risk_and_synthetic_calibr
         samples = client.get('/api/calibration').json()['samples']
         assert all(s['is_synthetic'] for s in samples)
     with TestClient(create_app(path)) as client:
+        login(client)
         assert len([d for d in client.get('/api/decisions').json() if d['is_retrospective']]) == 2

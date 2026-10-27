@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.config import Settings
 from app.main import create_app
@@ -54,6 +55,7 @@ def test_live_workflow_joins_bounded_search_and_all_model_stages(tmp_path):
     )
 
     with TestClient(app) as client:
+        login(client)
         created = client.post("/api/decisions", json=payload())
         assert created.status_code == 201
         decision_id = created.json()["id"]

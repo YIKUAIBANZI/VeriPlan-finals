@@ -3,6 +3,7 @@ import json
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 from pydantic import SecretStr
 
 from app.config import Settings
@@ -97,6 +98,7 @@ def test_compat_live_gate_uses_selected_provider_key(tmp_path, key, enabled, sea
         model_provider='openai_compat', openai_compat_api_key=key, tavily_api_key=search,
         deepseek_api_key='irrelevant', openai_compat_model='fixture')
     with TestClient(create_app(tmp_path / 'db', settings=settings, model_provider=DemoModelProvider(), search_provider=DemoSearchProvider())) as client:
+        login(client)
         assert client.get('/api/health').json()['live_available'] is unlocked
         assert client.post('/api/decisions', json=general_payload()).status_code == (201 if unlocked else 503)
 

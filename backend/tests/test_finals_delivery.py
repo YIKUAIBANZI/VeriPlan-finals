@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.helpers import authenticated_http, login
 
 from app.main import create_app
 from app.providers.demo import DemoModelProvider, DemoSearchProvider
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_export_contains_council_challenge_calibration_labels_and_outcomes(tmp_path):
     with TestClient(create_app(tmp_path / 'db')) as client:
+        login(client)
         decision = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + decision['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
@@ -41,6 +43,8 @@ def load_script(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'scripts' / f'{name}.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if name == 'live_smoke':
+        module.run_smoke = authenticated_http(module.run_smoke)
     return module
 
 

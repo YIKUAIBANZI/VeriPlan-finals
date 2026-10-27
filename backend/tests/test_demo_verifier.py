@@ -18,8 +18,8 @@ def _run(output: Path) -> subprocess.CompletedProcess[str]:
         environment[profile + "_API_KEY"] = "must-not-appear-" + profile.lower()
     environment["COUNCIL_MODEL_MAP"] = "expert=kimi"
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--output", str(output)],
-        cwd=ROOT,
+        [sys.executable, '-m', 'tests.helpers', str(SCRIPT), "--output", str(output)],
+        cwd=ROOT / 'backend',
         env=environment,
         capture_output=True,
         text=True,

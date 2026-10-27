@@ -4,6 +4,7 @@ from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.helpers import login
 
 from app.main import create_app
 from app.providers.contracts import validate_stage_output
@@ -97,6 +98,7 @@ def test_four_seats_overlap_isolate_and_reach_challenger(tmp_path):
 def test_old_three_seat_record_reads_exports_but_new_contract_requires_four(tmp_path):
     app = create_app(tmp_path / 'db')
     with TestClient(app) as client:
+        login(client)
         row = client.post('/api/decisions', json=general_payload()).json()
         url = '/api/decisions/' + row['id']
         client.post(url + '/run'); client.post(url + '/confirm'); client.post(url + '/run')
